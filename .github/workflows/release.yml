@@ -24,21 +24,24 @@ jobs:
       - name: Build binaries
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
+          BUILD_ID=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X tailsnitch/cmd.Version=$VERSION -X tailsnitch/cmd.BuildID=$BUILD_ID -X tailsnitch/cmd.BuildDate=$BUILD_DATE"
 
           # Linux amd64
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/tailsnitch-linux-amd64 .
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tailsnitch-linux-amd64 .
 
           # Linux arm64
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/tailsnitch-linux-arm64 .
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tailsnitch-linux-arm64 .
 
           # macOS amd64
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/tailsnitch-darwin-amd64 .
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tailsnitch-darwin-amd64 .
 
           # macOS arm64 (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/tailsnitch-darwin-arm64 .
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tailsnitch-darwin-arm64 .
 
           # Windows amd64
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/tailsnitch-windows-amd64.exe .
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tailsnitch-windows-amd64.exe .
 
       - name: Create checksums
         run: |
