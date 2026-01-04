@@ -328,16 +328,35 @@ func TestCheckExternalDevices(t *testing.T) {
 func TestCheckSensitiveMachineNames(t *testing.T) {
 	d := &DeviceAuditor{}
 
+	// MagicDNS enabled config - check should run
+	magicDNSEnabled := &client.DNSConfig{MagicDNS: true}
+	// MagicDNS disabled config - check should be skipped
+	magicDNSDisabled := &client.DNSConfig{MagicDNS: false}
+
 	tests := []struct {
 		name      string
 		devices   []*client.Device
+		dnsConfig *client.DNSConfig
 		wantPass  bool
 		wantCount int
 	}{
 		{
-			name:     "no devices",
-			devices:  nil,
-			wantPass: true,
+			name:      "MagicDNS disabled - always pass (check skipped)",
+			devices:   []*client.Device{{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"}},
+			dnsConfig: magicDNSDisabled,
+			wantPass:  true,
+		},
+		{
+			name:      "nil DNS config - always pass (check skipped)",
+			devices:   []*client.Device{{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"}},
+			dnsConfig: nil,
+			wantPass:  true,
+		},
+		{
+			name:      "no devices with MagicDNS enabled",
+			devices:   nil,
+			dnsConfig: magicDNSEnabled,
+			wantPass:  true,
 		},
 		{
 			name: "normal names - pass",
@@ -345,13 +364,15 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 				{DeviceID: "1", Name: "web-server-1", Hostname: "web-1"},
 				{DeviceID: "2", Name: "api-gateway", Hostname: "api"},
 			},
-			wantPass: true,
+			dnsConfig: magicDNSEnabled,
+			wantPass:  true,
 		},
 		{
 			name: "name with password - fail",
 			devices: []*client.Device{
 				{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"},
 			},
+			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
 			wantCount: 1,
 		},
@@ -360,6 +381,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 			devices: []*client.Device{
 				{DeviceID: "1", Name: "prod-database-primary", Hostname: "db1"},
 			},
+			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
 			wantCount: 1,
 		},
@@ -368,6 +390,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 			devices: []*client.Device{
 				{DeviceID: "1", Name: "server-192.168.1.100", Hostname: "srv"},
 			},
+			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
 			wantCount: 1,
 		},
@@ -376,6 +399,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 			devices: []*client.Device{
 				{DeviceID: "1", Name: "server", Hostname: "internal-api-server"},
 			},
+			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
 			wantCount: 1,
 		},
@@ -383,7 +407,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := d.checkSensitiveMachineNames(tt.devices)
+			result := d.checkSensitiveMachineNames(tt.devices, tt.dnsConfig)
 
 			if result.Pass != tt.wantPass {
 				t.Errorf("Pass = %v, want %v", result.Pass, tt.wantPass)

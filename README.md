@@ -102,7 +102,7 @@ Tailsnitch performs **52 security checks** across 7 categories.
 | DEV-004 | Medium | **Stale devices not seen recently** - Devices not seen in >30 days should be reviewed |
 | DEV-005 | Medium | **Unauthorized devices pending approval** - May indicate attempted unauthorized access |
 | DEV-006 | Info | **External devices in tailnet** - Shared devices from other tailnets |
-| DEV-007 | Medium | **Potentially sensitive machine names** - Names published to CT logs when HTTPS enabled |
+| DEV-007 | Medium | **Potentially sensitive machine names** - Names published to CT logs when HTTPS enabled (only runs if MagicDNS is enabled) |
 | DEV-008 | Low/Medium | **Devices with long key expiry periods** - Dev devices >90 days, servers >180 days flagged |
 | DEV-009 | Medium | **Device approval configuration** - Verifies device approval is enabled |
 | DEV-010 | High | **Tailnet Lock not enabled** - Prevents attackers from adding devices even with stolen auth keys |
@@ -334,6 +334,15 @@ All external HTTP requests (e.g., GitHub API calls for version checking) use a 1
 ### Local vs Remote Tailnet Checks
 
 Tailnet Lock status checks (DEV-010, DEV-012) run against the **local machine's tailscale daemon**. When auditing a remote tailnet via `--tailnet`, these checks reflect the local machine's Tailnet Lock status, not necessarily the audited tailnet. The output includes warnings when this distinction is relevant.
+
+### Conditional Checks
+
+Some checks only run when their prerequisites are met:
+
+| Check | Condition |
+|-------|-----------|
+| DEV-007 (Sensitive machine names) | Only runs when MagicDNS is enabled (names only appear in CT logs with HTTPS certs) |
+| DEV-010, DEV-012 (Tailnet Lock) | Requires local `tailscale` CLI binary |
 
 ## References
 

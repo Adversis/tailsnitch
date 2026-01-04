@@ -205,6 +205,9 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 		return nil, fmt.Errorf("failed to get devices: %w", err)
 	}
 
+	// Fetch DNS config for checks that need it (DEV-007)
+	dnsConfig, _ := d.client.GetDNSConfig(ctx) // Ignore error, check will handle nil
+
 	// DEV-001: Tagged devices with key expiry disabled
 	findings = append(findings, d.checkTaggedDevicesKeyExpiry(devices))
 
@@ -224,7 +227,8 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, d.checkExternalDevices(devices))
 
 	// DEV-007: Sensitive information in machine names (CT log exposure)
-	findings = append(findings, d.checkSensitiveMachineNames(devices))
+	// Only relevant when MagicDNS is enabled (names appear in HTTPS certs)
+	findings = append(findings, d.checkSensitiveMachineNames(devices, dnsConfig))
 
 	// DEV-008: Long key expiry (default 180 days)
 	findings = append(findings, d.checkLongKeyExpiry(devices))
@@ -637,7 +641,7 @@ func (d *DeviceAuditor) checkExternalDevices(devices []*client.Device) types.Sug
 	return finding
 }
 
-func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device) types.Suggestion {
+func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device, dnsConfig *client.DNSConfig) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-007",
 		Title:       "Potentially sensitive machine names",
@@ -647,6 +651,15 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device) typ
 		Remediation: "Rename devices to remove sensitive information before enabling HTTPS. Use generic names. Consider randomized tailnet DNS name.",
 		Source:      "https://tailscale.com/kb/1153/enabling-https",
 		Pass:        true,
+	}
+
+	// This check only applies when MagicDNS is enabled, since that's when
+	// machine names appear in HTTPS certificates and CT logs
+	if dnsConfig == nil || !dnsConfig.MagicDNS {
+		finding.Pass = true
+		finding.Description = "MagicDNS is disabled. Machine names are not exposed in HTTPS certificates or CT logs."
+		finding.Details = "This check is skipped because MagicDNS is not enabled."
+		return finding
 	}
 
 	// Patterns that might indicate sensitive info in machine names
@@ -673,7 +686,7 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device) typ
 	if len(sensitiveNames) > 0 {
 		finding.Pass = false
 		finding.Details = sensitiveNames
-		finding.Description = fmt.Sprintf("Found %d device(s) with potentially sensitive information in names. These may be exposed in CT logs.", len(sensitiveNames))
+		finding.Description = fmt.Sprintf("Found %d device(s) with potentially sensitive information in names. These may be exposed in CT logs when HTTPS certificates are requested.", len(sensitiveNames))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Rename devices to remove sensitive information",
