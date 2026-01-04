@@ -35,6 +35,7 @@ var (
 	noAuditLog bool
 	checks     string
 	listChecks bool
+	soc2Format string
 )
 
 var rootCmd = &cobra.Command{
@@ -64,6 +65,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&noAuditLog, "no-audit-log", false, "Disable audit logging of fix actions")
 	rootCmd.Flags().StringVar(&checks, "checks", "", "Run only specific checks (comma-separated IDs or slugs)")
 	rootCmd.Flags().BoolVar(&listChecks, "list-checks", false, "List all available checks and exit")
+	rootCmd.Flags().StringVar(&soc2Format, "soc2", "", "Export SOC2 evidence (json or csv)")
 }
 
 func Execute() error {
@@ -104,10 +106,32 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--fix and --json cannot be used together")
 	}
 
+	// Validate --soc2 flag
+	if soc2Format != "" && soc2Format != "json" && soc2Format != "csv" {
+		return fmt.Errorf("--soc2 must be 'json' or 'csv'")
+	}
+
+	if soc2Format != "" && (fixMode || jsonOutput) {
+		return fmt.Errorf("--soc2 cannot be combined with --fix or --json")
+	}
+
 	// Create Tailscale client
 	c, err := client.New(tailnet)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	// Handle SOC2 export mode
+	if soc2Format != "" {
+		collector := auditor.NewSOC2Collector(c)
+		soc2Report, err := collector.Collect(ctx)
+		if err != nil {
+			return fmt.Errorf("SOC2 collection failed: %w", err)
+		}
+		if soc2Format == "csv" {
+			return output.SOC2CSV(os.Stdout, soc2Report)
+		}
+		return output.SOC2JSON(os.Stdout, soc2Report)
 	}
 
 	// Print banner immediately (unless JSON output)
