@@ -1,6 +1,6 @@
 module tailsnitch
 
-go 1.23.1
+go 1.24.0
 
 toolchain go1.24.1
 
@@ -55,6 +55,7 @@ require (
 	golang.org/x/sync v0.9.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/time v0.14.0 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
