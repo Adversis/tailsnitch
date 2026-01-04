@@ -244,6 +244,29 @@ type DNSConfig struct {
 
 Security audit orchestration.
 
+### Tailscale Binary Configuration
+
+For Tailnet Lock checks (DEV-010, DEV-012), the auditor needs to execute the local `tailscale` CLI binary. You can specify a custom path:
+
+```go
+import "tailsnitch/pkg/auditor"
+
+// Set a custom path to the tailscale binary
+// Path must be absolute and point to an existing file
+err := auditor.SetTailscaleBinaryPath("/custom/path/to/tailscale")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+If no custom path is set, the auditor searches these locations in order:
+1. `/usr/bin/tailscale`
+2. `/usr/local/bin/tailscale`
+3. `/opt/homebrew/bin/tailscale` (macOS Homebrew ARM)
+4. `/snap/bin/tailscale` (Ubuntu Snap)
+5. `/usr/sbin/tailscale`
+6. PATH lookup (with current directory rejection for security)
+
 ### Running an Audit
 
 ```go
@@ -307,6 +330,14 @@ findings, err := loggingAuditor.Audit(ctx)
 dnsAuditor := auditor.NewDNSAuditor(c)
 findings, err := dnsAuditor.Audit(ctx)
 ```
+
+### Security Considerations
+
+The auditor module implements several security measures:
+
+- **HTTP Client Timeout**: External API calls (e.g., GitHub releases API for version checking) use a 10-second timeout to prevent hanging connections
+- **PATH Hijacking Prevention**: The `tailscale` binary is located using known safe paths first, rejecting any binary found in the current working directory
+- **Local Check Warnings**: Tailnet Lock checks run against the local machine's daemon and may not reflect the status of a remote tailnet being audited via `--tailnet`
 
 ### ACLPolicy Type
 

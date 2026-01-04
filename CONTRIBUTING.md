@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Tailsnitch! This document provide
 
 - Go 1.21 or later
 - A Tailscale account with API access
-- `tailscale` CLI installed (for some checks)
+- `tailscale` CLI installed (for Tailnet Lock checks DEV-010, DEV-012)
 
 ### Getting Started
 
@@ -188,6 +188,26 @@ finding.Details = []string{
 - Keep functions focused and under 100 lines where possible
 - Document exported functions and types
 - Use meaningful variable names
+
+## Security Guidelines
+
+When contributing code that interacts with external systems:
+
+### External Binary Execution
+
+- Never use `exec.LookPath` directly without additional validation
+- Use `findTailscaleBinary()` pattern: check known safe paths first, reject current directory
+- Always resolve to absolute paths before execution
+
+### HTTP Requests
+
+- Always use `httpClientWithTimeout` (10-second timeout) for external API calls
+- Never use `http.DefaultClient` which has no timeout
+
+### Sensitive Data
+
+- Never log API keys, tokens, or credentials
+- Be cautious with device names and user identifiers in output
 
 ## Testing
 

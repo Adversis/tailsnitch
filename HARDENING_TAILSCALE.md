@@ -13,10 +13,10 @@ tailscale-hardening-guide).
 
 ```bash
 # Audit your configuration
-tailsnitch scan
+tailsnitch
 
 # Check for specific issues
-tailsnitch scan --checks=default-acl,wildcard-ports,subnet-auto-approve
+tailsnitch --checks=default-allow-all-policy-active,auto-approvers-bypass-admin-approval
 ```
 ---
 
@@ -40,7 +40,7 @@ tailsnitch scan --checks=default-acl,wildcard-ports,subnet-auto-approve
 - [ ] Replace with deny-all baseline: `{"acls": []}`
 - [ ] Add explicit allow rules with specific ports
 - [ ] Verify no `"dst": ["*:*"]` or `"dst": ["tag:x:*"]` patterns remain
-- [ ] Run `tailsnitch scan` to verify
+- [ ] Run `tailsnitch` to verify
 
 > **Note on ACLs vs Grants:** Tailscale now recommends using [grants](https://tailscale.com/kb/1458/grant-examples) for all new tailnet policy file configurations. Grants provide all the capabilities of ACLs plus application-layer permissions. ACLs will continue to work indefinitely, but grants are the preferred modern approach. This checklist uses ACL syntax for compatibility, but consider migrating to grants for new deployments.
 
@@ -471,7 +471,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run tailsnitch
-        run: tailsnitch scan --config policy.hujson
+        run: tailsnitch --severity high
       
       - name: Test ACL
         if: github.event_name == 'pull_request'

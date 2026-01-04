@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +16,100 @@ import (
 	"tailsnitch/pkg/client"
 	"tailsnitch/pkg/types"
 )
+
+// httpClientWithTimeout is used for external API calls to prevent hanging
+var httpClientWithTimeout = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
+// tailscaleBinaryPath caches the verified path to the tailscale binary
+var tailscaleBinaryPath string
+
+// tailscaleBinaryOverride is set via CLI flag --tailscale-path
+var tailscaleBinaryOverride string
+
+// SetTailscaleBinaryPath allows specifying a custom path to the tailscale binary.
+// This is useful when tailscale is installed in a non-standard location.
+// The path must be absolute and the file must exist.
+func SetTailscaleBinaryPath(path string) error {
+	if path == "" {
+		return nil
+	}
+
+	// Ensure it's an absolute path
+	if !filepath.IsAbs(path) {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("could not resolve path %q: %w", path, err)
+		}
+		path = absPath
+	}
+
+	// Verify the file exists and is not a directory
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("tailscale binary not found at %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path %q is a directory, not a file", path)
+	}
+
+	tailscaleBinaryOverride = path
+	return nil
+}
+
+// findTailscaleBinary locates the tailscale binary using known safe paths.
+// This prevents PATH hijacking attacks by checking specific directories.
+// If a custom path was set via SetTailscaleBinaryPath, that is used instead.
+func findTailscaleBinary() (string, error) {
+	// Check user-specified override first
+	if tailscaleBinaryOverride != "" {
+		return tailscaleBinaryOverride, nil
+	}
+
+	// Check cached path
+	if tailscaleBinaryPath != "" {
+		return tailscaleBinaryPath, nil
+	}
+
+	// Known safe installation paths for tailscale binary
+	knownPaths := []string{
+		"/usr/bin/tailscale",
+		"/usr/local/bin/tailscale",
+		"/opt/homebrew/bin/tailscale",  // macOS Homebrew ARM
+		"/usr/local/Cellar/tailscale",  // macOS Homebrew Intel (will be resolved)
+		"/snap/bin/tailscale",          // Ubuntu Snap
+		"/usr/sbin/tailscale",
+	}
+
+	for _, path := range knownPaths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			tailscaleBinaryPath = path
+			return path, nil
+		}
+	}
+
+	// Fallback: use exec.LookPath but verify it's not in current directory
+	path, err := exec.LookPath("tailscale")
+	if err != nil {
+		return "", fmt.Errorf("tailscale binary not found in known paths or PATH (use --tailscale-path to specify)")
+	}
+
+	// Security check: ensure it's not a relative path (e.g., ./tailscale)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve tailscale path: %w", err)
+	}
+
+	// Reject if it's in the current working directory (potential hijack)
+	cwd, err := os.Getwd()
+	if err == nil && filepath.Dir(absPath) == cwd {
+		return "", fmt.Errorf("refusing to execute tailscale from current directory (use --tailscale-path for custom location)")
+	}
+
+	tailscaleBinaryPath = absPath
+	return absPath, nil
+}
 
 // getLatestTailscaleVersion fetches the latest stable version from GitHub releases API.
 // Per Tailscale docs, auto-updates take ~7 days to roll out, so we apply a grace period
@@ -27,7 +123,7 @@ func getLatestTailscaleVersion(ctx context.Context) (versionStr string, major, m
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClientWithTimeout.Do(req)
 	if err != nil {
 		return "", 0, 0, false
 	}
@@ -774,8 +870,34 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
 		Pass:        true,
 	}
 
+	// Find tailscale binary using secure path resolution
+	tsBinary, err := findTailscaleBinary()
+	if err != nil {
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = "Cannot check Tailnet Lock status: " + err.Error()
+		finding.Details = []string{
+			"The tailscale CLI binary could not be located securely.",
+			"",
+			"NOTE: This check runs on the LOCAL machine and may not reflect",
+			"the status of the tailnet being audited via --tailnet flag.",
+			"",
+			"To check Tailnet Lock status manually:",
+			"  1. Install Tailscale CLI: https://tailscale.com/download",
+			"  2. Run: tailscale lock status",
+			"",
+			"See: https://tailscale.com/kb/1226/tailnet-lock",
+		}
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeExternal,
+			Description: "Install tailscale CLI and run 'tailscale lock init'",
+			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+		}
+		return finding
+	}
+
 	// Try to run tailscale lock status
-	cmd := exec.CommandContext(ctx, "tailscale", "lock", "status")
+	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -867,11 +989,14 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
 	if strings.Contains(outputStr, "enabled") ||
 		strings.Contains(outputStr, "Tailnet lock is enabled") {
 		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled. Devices require cryptographic signing from trusted nodes."
+		finding.Description = "Tailnet Lock is enabled (local check). Devices require cryptographic signing from trusted nodes."
 
 		// Extract some useful info if available
 		var details []string
-		details = append(details, "Status: ENABLED")
+		details = append(details, "Status: ENABLED (checked via local tailscale CLI)")
+		details = append(details, "")
+		details = append(details, "NOTE: This check runs on the LOCAL machine. If auditing a remote")
+		details = append(details, "tailnet via --tailnet, verify lock status on that tailnet directly.")
 
 		// Try to extract key count or other info
 		lines := strings.Split(outputStr, "\n")
@@ -972,8 +1097,21 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Sugge
 		Pass:        true,
 	}
 
-	// Try to run tailscale lock status --json for detailed info
-	cmd := exec.CommandContext(ctx, "tailscale", "lock", "status")
+	// Find tailscale binary using secure path resolution
+	tsBinary, err := findTailscaleBinary()
+	if err != nil {
+		// Can't find binary, skip this check
+		finding.Pass = true
+		finding.Description = "Tailnet Lock pending check skipped (CLI unavailable)."
+		finding.Details = []string{
+			"This check only applies when Tailnet Lock is enabled.",
+			"NOTE: This check runs on the LOCAL machine.",
+		}
+		return finding
+	}
+
+	// Try to run tailscale lock status for detailed info
+	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -1025,13 +1163,17 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Sugge
 	// Check if lock is enabled but no pending nodes
 	if strings.Contains(outputStr, "enabled") {
 		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures."
+		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures (local check)."
+		finding.Details = "NOTE: This check runs on the LOCAL machine. If auditing a remote tailnet, verify directly."
 		return finding
 	}
 
 	// Lock not enabled - skip this check
 	finding.Pass = true
 	finding.Description = "Tailnet Lock is not enabled. Enable it to require device signing."
-	finding.Details = "This check only reports pending signatures when Tailnet Lock is active."
+	finding.Details = []string{
+		"This check only reports pending signatures when Tailnet Lock is active.",
+		"NOTE: This check runs on the LOCAL machine.",
+	}
 	return finding
 }

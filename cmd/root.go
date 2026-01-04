@@ -24,18 +24,19 @@ var (
 )
 
 var (
-	jsonOutput bool
-	severity   string
-	category   string
-	tailnet    string
-	verbose    bool
-	fixMode    bool
-	autoFix    bool
-	dryRun     bool
-	noAuditLog bool
-	checks     string
-	listChecks bool
-	soc2Format string
+	jsonOutput    bool
+	severity      string
+	category      string
+	tailnet       string
+	verbose       bool
+	fixMode       bool
+	autoFix       bool
+	dryRun        bool
+	noAuditLog    bool
+	checks        string
+	listChecks    bool
+	soc2Format    string
+	tailscalePath string
 )
 
 var rootCmd = &cobra.Command{
@@ -66,6 +67,7 @@ func init() {
 	rootCmd.Flags().StringVar(&checks, "checks", "", "Run only specific checks (comma-separated IDs or slugs)")
 	rootCmd.Flags().BoolVar(&listChecks, "list-checks", false, "List all available checks and exit")
 	rootCmd.Flags().StringVar(&soc2Format, "soc2", "", "Export SOC2 evidence (json or csv)")
+	rootCmd.Flags().StringVar(&tailscalePath, "tailscale-path", "", "Path to tailscale CLI binary (for Tailnet Lock checks)")
 }
 
 func Execute() error {
@@ -119,6 +121,13 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	c, err := client.New(tailnet)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
+	}
+
+	// Set custom tailscale binary path if specified
+	if tailscalePath != "" {
+		if err := auditor.SetTailscaleBinaryPath(tailscalePath); err != nil {
+			return fmt.Errorf("invalid --tailscale-path: %w", err)
+		}
 	}
 
 	// Handle SOC2 export mode

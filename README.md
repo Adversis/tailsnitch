@@ -61,6 +61,8 @@ export TSKEY="tskey-api-..."
 | `--auto` | Auto-select safe fixes (requires `--fix`) |
 | `--dry-run` | Preview fix actions without executing (requires `--fix`) |
 | `--no-audit-log` | Disable audit logging of fix actions |
+| `--tailscale-path` | Path to tailscale CLI binary (for Tailnet Lock checks) |
+| `--soc2` | Export SOC2 evidence report (`json` or `csv`) |
 
 ## Security Checks
 
@@ -304,6 +306,34 @@ export TSKEY="tskey-api-..."
 ```
 
 Create an API key at: https://login.tailscale.com/admin/settings/keys
+
+## Security
+
+Tailsnitch implements several security measures to protect against common attack vectors:
+
+### PATH Hijacking Prevention
+
+When executing the `tailscale` CLI binary for Tailnet Lock checks (DEV-010, DEV-012), Tailsnitch uses secure path resolution:
+
+1. **Known safe paths first**: Checks standard installation directories (`/usr/bin/tailscale`, `/usr/local/bin/tailscale`, `/opt/homebrew/bin/tailscale`, etc.) before falling back to PATH lookup
+2. **Current directory rejection**: Refuses to execute any binary found in the current working directory to prevent local hijacking attacks
+3. **Absolute path validation**: All paths are resolved to absolute paths before execution
+
+If your tailscale binary is installed in a non-standard location, use the `--tailscale-path` flag:
+
+```bash
+./tailsnitch --tailscale-path /custom/path/to/tailscale
+```
+
+The custom path must be an absolute path to an existing file.
+
+### HTTP Client Timeouts
+
+All external HTTP requests (e.g., GitHub API calls for version checking) use a 10-second timeout to prevent hanging connections.
+
+### Local vs Remote Tailnet Checks
+
+Tailnet Lock status checks (DEV-010, DEV-012) run against the **local machine's tailscale daemon**. When auditing a remote tailnet via `--tailnet`, these checks reflect the local machine's Tailnet Lock status, not necessarily the audited tailnet. The output includes warnings when this distinction is relevant.
 
 ## References
 
