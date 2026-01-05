@@ -56,7 +56,8 @@ Set TSKEY environment variable with Tailscale API key.`,
 }
 
 func init() {
-	rootCmd.SetVersionTemplate(fmt.Sprintf("tailsnitch %s (build: %s, date: %s)\nby Adversis.io\n", Version, BuildID, BuildDate))
+	rootCmd.SetVersionTemplate(fmt.Sprintf("tailsnitch %s (build: %s, date: %s)\n", Version, BuildID, BuildDate))
+	rootCmd.SetHelpFunc(customHelp)
 	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	rootCmd.Flags().StringVar(&severity, "severity", "", "Filter by minimum severity (critical, high, medium, low, info)")
 	rootCmd.Flags().StringVar(&category, "category", "", "Filter by category")
@@ -277,6 +278,30 @@ func parseCategory(s string) types.Category {
 	default:
 		return ""
 	}
+}
+
+func customHelp(cmd *cobra.Command, args []string) {
+	// Print logo
+	fmt.Println()
+	fmt.Println("  ████████╗ █████╗ ██╗██╗     ███████╗███╗   ██╗██╗████████╗ ██████╗██╗  ██╗")
+	fmt.Println("  ╚══██╔══╝██╔══██╗██║██║     ██╔════╝████╗  ██║██║╚══██╔══╝██╔════╝██║  ██║")
+	fmt.Println("     ██║   ███████║██║██║     ███████╗██╔██╗ ██║██║   ██║   ██║     ███████║")
+	fmt.Println("     ██║   ██╔══██║██║██║     ╚════██║██║╚██╗██║██║   ██║   ██║     ██╔══██║")
+	fmt.Println("     ██║   ██║  ██║██║███████╗███████║██║ ╚████║██║   ██║   ╚██████╗██║  ██║")
+	fmt.Println("     ╚═╝   ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝")
+	fmt.Println()
+
+	// Print version and branding
+	versionStr := Version
+	if BuildID != "unknown" && BuildID != "" {
+		versionStr = fmt.Sprintf("%s (%s)", Version, BuildID)
+	}
+	fmt.Printf("  Version: %s\n", versionStr)
+	fmt.Println("  by Adversis")
+	fmt.Println()
+
+	// Print default help
+	fmt.Println(cmd.UsageString())
 }
 
 func printAvailableChecks() {
