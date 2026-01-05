@@ -698,14 +698,13 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 		Title:       "Taildrop file sharing configuration (Node Attributes)",
 		Severity:    types.Informational,
 		Category:    types.AccessControl,
-		Description: "Taildrop allows direct file transfer between tailnet devices. Review if this aligns with your data transfer policies.",
-		Remediation: "If Taildrop poses a data exfiltration risk, disable it via nodeAttrs. Otherwise, ensure only appropriate users/devices can use it.",
+		Description: "Taildrop allows direct file transfer between tailnet devices.",
+		Remediation: "If Taildrop poses a data exfiltration risk, disable it via nodeAttrs.",
 		Source:      "https://tailscale.com/kb/1106/taildrop",
-		Pass:        true,
+		Pass:        true, // Informational only - default Taildrop enabled is not a misconfiguration
 	}
 
 	var taildropConfigs []string
-	taildropEnabled := false
 	taildropDisabled := false
 
 	for _, attr := range policy.NodeAttrs {
@@ -716,7 +715,6 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 					taildropDisabled = true
 					taildropConfigs = append(taildropConfigs, fmt.Sprintf("Taildrop disabled for: %v", attr.Target))
 				} else {
-					taildropEnabled = true
 					taildropConfigs = append(taildropConfigs, fmt.Sprintf("Taildrop enabled for: %v", attr.Target))
 				}
 			}
@@ -724,23 +722,15 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 	}
 
 	if len(taildropConfigs) == 0 {
-		// No explicit config means Taildrop uses default (enabled for all)
-		finding.Pass = false
-		finding.Description = "No explicit Taildrop configuration found. Taildrop is enabled by default for all devices, allowing file transfers between any tailnet members."
+		// No explicit config means Taildrop uses default (enabled for all) - this is normal
+		finding.Description = "Taildrop uses default configuration (enabled for all devices)."
 		finding.Details = "Default: Taildrop enabled for all devices"
-		finding.Fix = &types.FixInfo{
-			Type: types.FixTypeManual,
-			Description: `To restrict Taildrop, add nodeAttrs. Example to disable for tagged servers:
-  "nodeAttrs": [{"target": ["tag:server"], "attr": ["taildrop:false"]}]`,
-			AdminURL: "https://login.tailscale.com/admin/acls/visual/node-attributes",
-			DocURL:   "https://tailscale.com/kb/1106/taildrop",
-		}
 	} else {
 		finding.Details = taildropConfigs
-		if taildropEnabled && !taildropDisabled {
-			finding.Description = "Taildrop is explicitly enabled for some targets."
-		} else if taildropDisabled {
+		if taildropDisabled {
 			finding.Description = "Taildrop has been explicitly configured with restrictions."
+		} else {
+			finding.Description = "Taildrop is explicitly configured."
 		}
 	}
 

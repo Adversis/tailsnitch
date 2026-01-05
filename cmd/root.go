@@ -37,6 +37,8 @@ var (
 	listChecks    bool
 	soc2Format    string
 	tailscalePath string
+	ignoreFile    string
+	noIgnore      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -68,6 +70,8 @@ func init() {
 	rootCmd.Flags().BoolVar(&listChecks, "list-checks", false, "List all available checks and exit")
 	rootCmd.Flags().StringVar(&soc2Format, "soc2", "", "Export SOC2 evidence (json or csv)")
 	rootCmd.Flags().StringVar(&tailscalePath, "tailscale-path", "", "Path to tailscale CLI binary (for Tailnet Lock checks)")
+	rootCmd.Flags().StringVar(&ignoreFile, "ignore-file", "", "Path to ignore file (default: .tailsnitch-ignore)")
+	rootCmd.Flags().BoolVar(&noIgnore, "no-ignore", false, "Disable ignore file processing")
 }
 
 func Execute() error {
@@ -157,6 +161,31 @@ func runAudit(cmd *cobra.Command, args []string) error {
 
 	// Apply filters
 	suggestions := report.Suggestions
+
+	// Load and apply ignore file
+	var ignoredPath string
+	if !noIgnore {
+		var ignoreList *types.IgnoreList
+		if ignoreFile != "" {
+			// User-specified ignore file
+			var err error
+			ignoreList, err = types.LoadIgnoreFile(ignoreFile)
+			if err != nil {
+				return fmt.Errorf("failed to load ignore file %s: %w", ignoreFile, err)
+			}
+			ignoredPath = ignoreFile
+		} else {
+			// Try default locations
+			ignoreList, ignoredPath = types.LoadIgnoreFiles()
+		}
+
+		if ignoreList.Count() > 0 {
+			suggestions = types.FilterIgnored(suggestions, ignoreList)
+			if !jsonOutput {
+				fmt.Printf("  Using ignore file: %s (%d rules)\n\n", ignoredPath, ignoreList.Count())
+			}
+		}
+	}
 
 	// Filter by severity
 	if severity != "" {

@@ -245,6 +245,9 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// DEV-012: Nodes awaiting Tailnet Lock signature
 	findings = append(findings, d.checkTailnetLockPending(ctx))
 
+	// DEV-013: User devices with key expiry disabled
+	findings = append(findings, d.checkUserDevicesKeyExpiryDisabled(devices))
+
 	return findings, nil
 }
 
@@ -497,13 +500,13 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 		Title:       "Stale devices not seen recently",
 		Severity:    types.Medium,
 		Category:    types.DeviceSecurity,
-		Description: "Devices not seen in over 30 days may be unused and should be reviewed for removal.",
+		Description: "Devices not seen in over 60 days may be unused and should be reviewed for removal.",
 		Remediation: "Review and remove unused devices. Implement device lifecycle policies.",
 		Source:      "https://tailscale.com/kb/1068/tags",
 		Pass:        true,
 	}
 
-	thirtyDaysAgo := time.Now().AddDate(0, 0, -30)
+	staleThreshold := time.Now().AddDate(0, 0, -60)
 	var staleDevices []string
 
 	for _, dev := range devices {
@@ -516,7 +519,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 			continue
 		}
 
-		if lastSeen.Before(thirtyDaysAgo) {
+		if lastSeen.Before(staleThreshold) {
 			daysSince := int(time.Since(lastSeen).Hours() / 24)
 			staleDevices = append(staleDevices, fmt.Sprintf("%s (%s): last seen %d days ago", dev.Name, dev.Hostname, daysSince))
 		}
@@ -525,7 +528,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 	if len(staleDevices) > 0 {
 		finding.Pass = false
 		finding.Details = staleDevices
-		finding.Description = fmt.Sprintf("Found %d device(s) not seen in over 30 days.", len(staleDevices))
+		finding.Description = fmt.Sprintf("Found %d device(s) not seen in over 60 days.", len(staleDevices))
 
 		// Build fixable items
 		var fixableItems []types.FixableItem
@@ -537,7 +540,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 			if err != nil {
 				continue
 			}
-			if lastSeen.Before(thirtyDaysAgo) {
+			if lastSeen.Before(staleThreshold) {
 				daysSince := int(time.Since(lastSeen).Hours() / 24)
 				fixableItems = append(fixableItems, types.FixableItem{
 					ID:          dev.DeviceID,
@@ -551,7 +554,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 			Description: "Remove stale devices that are no longer in use",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
 			Items:       fixableItems,
-			AutoFixSafe: true, // Safe to remove devices not seen in 30+ days
+			AutoFixSafe: true, // Safe to remove devices not seen in 60+ days
 		}
 	}
 
@@ -1188,5 +1191,50 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Sugge
 		"This check only reports pending signatures when Tailnet Lock is active.",
 		"NOTE: This check runs on the LOCAL machine.",
 	}
+	return finding
+}
+
+func (d *DeviceAuditor) checkUserDevicesKeyExpiryDisabled(devices []*client.Device) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "DEV-013",
+		Title:       "User devices with key expiry disabled",
+		Severity:    types.Low,
+		Category:    types.DeviceSecurity,
+		Description: "User devices with key expiry disabled never require re-authentication, which may be a compliance concern.",
+		Remediation: "Review devices with disabled key expiry. Re-enable expiry unless there's a specific operational need.",
+		Source:      "https://tailscale.com/kb/1028/key-expiry",
+		Pass:        true,
+	}
+
+	var devicesWithExpiryDisabled []string
+	for _, dev := range devices {
+		// Skip tagged devices (covered by DEV-001 at higher severity)
+		if len(dev.Tags) > 0 {
+			continue
+		}
+
+		// Skip external devices (not managed by this tailnet)
+		if dev.IsExternal {
+			continue
+		}
+
+		if dev.KeyExpiryDisabled {
+			devicesWithExpiryDisabled = append(devicesWithExpiryDisabled,
+				fmt.Sprintf("%s (%s) - user: %s", dev.Name, dev.Hostname, dev.User))
+		}
+	}
+
+	if len(devicesWithExpiryDisabled) > 0 {
+		finding.Pass = false
+		finding.Details = devicesWithExpiryDisabled
+		finding.Description = fmt.Sprintf("Found %d user device(s) with key expiry disabled. These devices never require re-authentication.", len(devicesWithExpiryDisabled))
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeManual,
+			Description: "Review and re-enable key expiry for user devices in admin console",
+			AdminURL:    "https://login.tailscale.com/admin/machines",
+			DocURL:      "https://tailscale.com/kb/1028/key-expiry",
+		}
+	}
+
 	return finding
 }

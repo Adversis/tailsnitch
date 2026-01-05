@@ -170,7 +170,7 @@ func TestCheckStaleDevices(t *testing.T) {
 	d := &DeviceAuditor{}
 
 	now := time.Now()
-	thirtyOneDaysAgo := now.AddDate(0, 0, -31).Format(time.RFC3339)
+	sixtyOneDaysAgo := now.AddDate(0, 0, -61).Format(time.RFC3339)
 	tenDaysAgo := now.AddDate(0, 0, -10).Format(time.RFC3339)
 
 	tests := []struct {
@@ -194,7 +194,7 @@ func TestCheckStaleDevices(t *testing.T) {
 		{
 			name: "stale device - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "old-server", Hostname: "old-server", LastSeen: thirtyOneDaysAgo},
+				{DeviceID: "1", Name: "old-server", Hostname: "old-server", LastSeen: sixtyOneDaysAgo},
 			},
 			wantPass:  false,
 			wantCount: 1,

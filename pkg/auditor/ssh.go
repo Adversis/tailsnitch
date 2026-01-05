@@ -104,21 +104,39 @@ func hasCheckMode(rule SSHRule) bool {
 	return rule.Action == "check" || rule.CheckPeriod != ""
 }
 
-// isSensitiveDestination returns true if any destination looks like a sensitive/production target
+// isSensitiveDestination returns true if any destination looks like a sensitive/production target.
+// Only matches tag: prefixed destinations to avoid false positives on user device names.
 func isSensitiveDestination(destinations []string) bool {
-	sensitivePatterns := []string{
+	// Patterns that indicate sensitive infrastructure when used in tags
+	// These are matched as complete tag segments (after "tag:" prefix)
+	sensitiveTagPatterns := []string{
 		"prod", "production", "prd",
-		"sensitive", "critical", "secure",
-		"database", "db", "mysql", "postgres", "mongo", "redis",
-		"vault", "secret", "key",
+		"database", "mysql", "postgres", "mongo", "redis",
+		"vault", "secrets",
 		"payment", "billing", "finance",
-		"pci", "hipaa", "sox",
+		"pci", "hipaa",
 	}
 
 	for _, dst := range destinations {
 		dstLower := strings.ToLower(dst)
-		for _, pattern := range sensitivePatterns {
-			if strings.Contains(dstLower, pattern) {
+
+		// Only check tag: destinations - user devices shouldn't trigger this
+		if !strings.HasPrefix(dstLower, "tag:") {
+			continue
+		}
+
+		// Extract tag name (e.g., "tag:prod-server" -> "prod-server")
+		tagName := strings.TrimPrefix(dstLower, "tag:")
+
+		for _, pattern := range sensitiveTagPatterns {
+			// Match if tag starts with pattern, ends with pattern, or contains -pattern- or _pattern_
+			if tagName == pattern ||
+				strings.HasPrefix(tagName, pattern+"-") ||
+				strings.HasPrefix(tagName, pattern+"_") ||
+				strings.HasSuffix(tagName, "-"+pattern) ||
+				strings.HasSuffix(tagName, "_"+pattern) ||
+				strings.Contains(tagName, "-"+pattern+"-") ||
+				strings.Contains(tagName, "_"+pattern+"_") {
 				return true
 			}
 		}

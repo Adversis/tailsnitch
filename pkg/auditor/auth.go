@@ -136,7 +136,7 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 			Description: "Delete reusable auth keys that are no longer needed",
 			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
 			Items:       fixableItems,
-			AutoFixSafe: true,
+			AutoFixSafe: false, // Reusable keys may be in active CI/CD use
 		}
 	}
 
@@ -177,7 +177,7 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 			Description: "Delete long-expiry keys and recreate with shorter expiry",
 			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
 			Items:       fixableItems,
-			AutoFixSafe: true,
+			AutoFixSafe: false, // Long-expiry keys may be intentional
 		}
 	}
 
