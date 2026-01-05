@@ -188,7 +188,7 @@ Wrapper around the official Tailscale Go client.
 ### Creating a Client
 
 ```go
-import "tailsnitch/pkg/client"
+import "github.com/Adversis/tailsnitch/pkg/client"
 
 // Requires TSKEY environment variable
 c, err := client.New("your-tailnet")
@@ -249,7 +249,7 @@ Security audit orchestration.
 For Tailnet Lock checks (DEV-010, DEV-012), the auditor needs to execute the local `tailscale` CLI binary. You can specify a custom path:
 
 ```go
-import "tailsnitch/pkg/auditor"
+import "github.com/Adversis/tailsnitch/pkg/auditor"
 
 // Set a custom path to the tailscale binary
 // Path must be absolute and point to an existing file
@@ -271,8 +271,8 @@ If no custom path is set, the auditor searches these locations in order:
 
 ```go
 import (
-    "tailsnitch/pkg/client"
-    "tailsnitch/pkg/auditor"
+    "github.com/Adversis/tailsnitch/pkg/client"
+    "github.com/Adversis/tailsnitch/pkg/auditor"
 )
 
 // Create client
@@ -421,9 +421,9 @@ import (
     "fmt"
     "os"
 
-    "tailsnitch/pkg/auditor"
-    "tailsnitch/pkg/client"
-    "tailsnitch/pkg/types"
+    "github.com/Adversis/tailsnitch/pkg/auditor"
+    "github.com/Adversis/tailsnitch/pkg/client"
+    "github.com/Adversis/tailsnitch/pkg/types"
 )
 
 func main() {
