@@ -1,7 +1,6 @@
 # Tailscale Hardening Checklist
 
-Implementation-ready security controls for Tailscale deployments. This checklist accompanies a longer piece [Tailscale Security: Threat-Based Hardening for Growing Companies](https://www.adversis.io/blogs/
-tailscale-hardening-guide).
+Implementation-ready security controls for Tailscale deployments. This checklist accompanies a longer piece [Tailscale Security: Threat-Based Hardening for Growing Companies](https://www.adversis.io/blogs/tailscale-hardening-guide).
 
 ## Quick Start
 
@@ -22,7 +21,7 @@ tailsnitch --checks=default-allow-all-policy-active,auto-approvers-bypass-admin-
 
 ## Threat Scenarios Quick Reference
 
-| You Are | Primary Threats | Implement Up To |
+| You Are | Primary Threats | Coverage At Least To |
 |---------|-----------------|---------|
 | Most B2B SaaS companies | Opportunistic criminals, commodity malware | Priority 2 |
 | Companies with valuable data, enterprise customers | Targeted cybercrime, ransomware groups | Priority 4 |
@@ -30,9 +29,7 @@ tailsnitch --checks=default-allow-all-policy-active,auto-approvers-bypass-admin-
 
 ---
 
-## Priority 1: Non-Negotiables (Everyone)
-
-*Scenario A minimum. If you do nothing else, do this.*
+## Priority 1: Non-Negotiables
 
 ### 1.1 Replace Default ACL
 
@@ -167,7 +164,7 @@ Subnet routers are high-value targets—compromise one advertising a /16 and you
 
 
 
-*You can't secure what you can't see. Start with management plane visibility—it's achievable without Enterprise.*
+*You can't secure what you can't see. Start with management plane visibility.*
 
 ### 2.1 Configure Webhooks for Management Events
 
@@ -214,7 +211,7 @@ Even if you don't use Panther, the rule logic is useful reference.
 
 ## Priority 3: Segmentation and Posture
 
-*Limit blast radius. A compromised frontend developer laptop shouldn't reach backend infrastructure.*
+*Limit blast radius. A compromised frontend developer laptop shouldn't reach backend prod infrastructure they don't need access to.*
 
 ### 3.1 Segment by Function
 
@@ -589,7 +586,7 @@ Replace subnet routers with app connectors where possible to expose specific app
 
 ## Operational Cadence
 
-*Be honest about what you'll actually maintain. Consistent periodic reviews beat an elaborate checklist that gets ignored.*
+*Be honest about what you'll maintain.*
 
 ### Regular Reviews
 
@@ -682,8 +679,7 @@ Replace subnet routers with app connectors where possible to expose specific app
 
 ## Additional Resources
 
-- [Full Threat Analysis](https://www.adversis.io/blogs/
-tailscale-hardening-guide) — Detailed threat scenarios and architectural guidance
+- [Full Threat Analysis](https://www.adversis.io/blogs/tailscale-hardening-guide) — Detailed threat scenarios and architectural guidance
 - [Tailscale ACL Documentation](https://tailscale.com/kb/1018/acls/)
 - [Tailscale Grants Documentation](https://tailscale.com/kb/1458/grant-examples) — Recommended modern approach
 - [Tailscale Webhooks](https://tailscale.com/kb/1213/webhooks)
