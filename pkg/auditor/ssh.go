@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // SSHAuditor checks for SSH and device security issues

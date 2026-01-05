@@ -11,8 +11,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fatih/color"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // AdminURLs maps suggestion prefixes to admin console URLs

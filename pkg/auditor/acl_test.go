@@ -3,7 +3,7 @@ package auditor
 import (
 	"testing"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 func TestCheckAllowAll(t *testing.T) {

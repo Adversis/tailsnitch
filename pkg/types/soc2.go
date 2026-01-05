@@ -28,13 +28,13 @@ type SOC2ControlTest struct {
 
 // SOC2Summary contains aggregate statistics for the SOC2 report
 type SOC2Summary struct {
-	TotalTests   int            `json:"total_tests"`
-	PassedTests  int            `json:"passed_tests"`
-	FailedTests  int            `json:"failed_tests"`
-	NATests      int            `json:"na_tests"`
-	ByCC         map[string]int `json:"by_cc"`         // Count of failures per CC code
-	ByResource   map[string]int `json:"by_resource"`   // Count of tests per resource type
-	PassRate     float64        `json:"pass_rate"`     // Percentage of passing tests
+	TotalTests  int            `json:"total_tests"`
+	PassedTests int            `json:"passed_tests"`
+	FailedTests int            `json:"failed_tests"`
+	NATests     int            `json:"na_tests"`
+	ByCC        map[string]int `json:"by_cc"`       // Count of failures per CC code
+	ByResource  map[string]int `json:"by_resource"` // Count of tests per resource type
+	PassRate    float64        `json:"pass_rate"`   // Percentage of passing tests
 }
 
 // SOC2Report contains the complete SOC2 evidence export

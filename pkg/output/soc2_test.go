@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 func TestSOC2JSON(t *testing.T) {

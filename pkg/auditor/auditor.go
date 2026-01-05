@@ -12,8 +12,8 @@ import (
 	"github.com/tailscale/hujson"
 	"golang.org/x/sync/errgroup"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // auditorResult holds the findings and error from a single auditor

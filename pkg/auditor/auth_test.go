@@ -4,18 +4,18 @@ import (
 	"testing"
 	"time"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 func TestCheckReusableKeys(t *testing.T) {
 	a := &AuthAuditor{} // nil client is fine - check functions don't use it
 
 	tests := []struct {
-		name       string
-		keys       []keyInfo
-		wantPass   bool
-		wantSev    types.Severity
-		wantCount  int // expected number of flagged keys
+		name      string
+		keys      []keyInfo
+		wantPass  bool
+		wantSev   types.Severity
+		wantCount int // expected number of flagged keys
 	}{
 		{
 			name:     "no keys",
@@ -252,9 +252,9 @@ func TestKeyInfoDaysToExpiry(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name         string
-		expires      time.Time
-		wantApprox   int
+		name       string
+		expires    time.Time
+		wantApprox int
 	}{
 		{
 			name:       "30 days from now",

@@ -3,8 +3,8 @@ package auditor
 import (
 	"context"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // LoggingAuditor checks for logging and administrative issues
