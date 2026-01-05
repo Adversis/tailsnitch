@@ -1,4 +1,4 @@
-module tailsnitch
+module github.com/Adversis/tailsnitch
 
 go 1.24.0
 
@@ -12,6 +12,8 @@ require (
 	github.com/spf13/cobra v1.8.1
 	github.com/tailscale/hujson v0.0.0-20250605163823-992244df8c5a
 	golang.org/x/oauth2 v0.16.0
+	golang.org/x/sync v0.9.0
+	golang.org/x/time v0.14.0
 	tailscale.com v1.76.6
 )
 
@@ -52,10 +54,8 @@ require (
 	golang.org/x/crypto v0.25.0 // indirect
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a // indirect
 	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/sync v0.9.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect

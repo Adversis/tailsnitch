@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // JSON outputs the audit report as JSON

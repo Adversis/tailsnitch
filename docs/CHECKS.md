@@ -323,10 +323,10 @@ This document provides detailed information about all 52 security checks perform
 
 **Severity:** MEDIUM
 
-**Description:** Devices not seen in over 30 days may be unused.
+**Description:** Devices not seen in over 60 days may be unused.
 
 **What it checks:**
-- `LastSeen` more than 30 days ago
+- `LastSeen` more than 60 days ago
 
 **Remediation:** Review and remove unused devices.
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // DNSAuditor checks for DNS configuration issues

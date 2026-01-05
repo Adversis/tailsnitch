@@ -153,8 +153,8 @@ func TestAPIErrorUnwrap(t *testing.T) {
 
 func TestAPIErrorMessage(t *testing.T) {
 	tests := []struct {
-		name       string
-		apiErr     *APIError
+		name         string
+		apiErr       *APIError
 		wantContains []string
 	}{
 		{

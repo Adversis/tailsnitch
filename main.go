@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"tailsnitch/cmd"
+	"github.com/Adversis/tailsnitch/cmd"
 )
 
 func main() {

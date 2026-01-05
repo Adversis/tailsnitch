@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"tailsnitch/pkg/auditor"
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/fixer"
-	"tailsnitch/pkg/output"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/auditor"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/fixer"
+	"github.com/Adversis/tailsnitch/pkg/output"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // Version info - set via ldflags at build time

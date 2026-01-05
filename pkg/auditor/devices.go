@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // httpClientWithTimeout is used for external API calls to prevent hanging
@@ -76,9 +76,9 @@ func findTailscaleBinary() (string, error) {
 	knownPaths := []string{
 		"/usr/bin/tailscale",
 		"/usr/local/bin/tailscale",
-		"/opt/homebrew/bin/tailscale",  // macOS Homebrew ARM
-		"/usr/local/Cellar/tailscale",  // macOS Homebrew Intel (will be resolved)
-		"/snap/bin/tailscale",          // Ubuntu Snap
+		"/opt/homebrew/bin/tailscale", // macOS Homebrew ARM
+		"/usr/local/Cellar/tailscale", // macOS Homebrew Intel (will be resolved)
+		"/snap/bin/tailscale",         // Ubuntu Snap
 		"/usr/sbin/tailscale",
 	}
 

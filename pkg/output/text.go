@@ -8,7 +8,7 @@ import (
 
 	"github.com/fatih/color"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 var (

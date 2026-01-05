@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // AuthAuditor checks for authentication and key management issues

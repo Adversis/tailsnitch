@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 func TestCheckTaggedDevicesKeyExpiry(t *testing.T) {

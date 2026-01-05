@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // SOC2JSON outputs the SOC2 report as JSON

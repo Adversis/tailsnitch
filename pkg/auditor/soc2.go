@@ -11,8 +11,8 @@ import (
 
 	"github.com/tailscale/hujson"
 
-	"tailsnitch/pkg/client"
-	"tailsnitch/pkg/types"
+	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
 // SOC2Collector gathers evidence for SOC 2 audit reports
