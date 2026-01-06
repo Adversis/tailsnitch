@@ -2,9 +2,9 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 BUILD_ID ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-LDFLAGS := -X tailsnitch/cmd.Version=$(VERSION) \
-           -X tailsnitch/cmd.BuildID=$(BUILD_ID) \
-           -X tailsnitch/cmd.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X github.com/Adversis/tailsnitch/cmd.Version=$(VERSION) \
+           -X github.com/Adversis/tailsnitch/cmd.BuildID=$(BUILD_ID) \
+           -X github.com/Adversis/tailsnitch/cmd.BuildDate=$(BUILD_DATE)
 
 .PHONY: build install clean rebuild
 
