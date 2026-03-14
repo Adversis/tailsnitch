@@ -64,7 +64,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	if err != nil {
 		// Check for authentication errors - fail fast
 		if isAuthError(err) {
-			return nil, fmt.Errorf("authentication failed: %w\n\nPlease check your TSKEY environment variable contains a valid API key.\nGenerate a new key at: https://login.tailscale.com/admin/settings/keys", err)
+			return nil, fmt.Errorf("authentication failed: %w\n\nPlease check your TS_API_KEY environment variable contains a valid API key.\nGenerate a new key at: https://login.tailscale.com/admin/settings/keys", err)
 		}
 
 		report.Suggestions = append(report.Suggestions, types.Suggestion{

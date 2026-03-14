@@ -94,7 +94,7 @@ func classifyError(err error, op, resource string) *APIError {
 	if strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "api token invalid") {
 		apiErr.Kind = ErrAuthentication
 		apiErr.StatusCode = 401
-		apiErr.Suggestion = "Check your TSKEY or OAuth credentials. Generate a new key at: https://login.tailscale.com/admin/settings/keys"
+		apiErr.Suggestion = "Check your TS_API_KEY or OAuth credentials. Generate a new key at: https://login.tailscale.com/admin/settings/keys"
 		return apiErr
 	}
 
@@ -162,7 +162,7 @@ func (c *Client) wait(ctx context.Context) error {
 
 // New creates a new Tailscale API client.
 // It supports two authentication methods:
-//   - API Key: Set the TSKEY environment variable
+//   - API Key: Set the TS_API_KEY environment variable
 //   - OAuth: Set TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET environment variables
 //
 // OAuth is preferred when both are set.
@@ -188,9 +188,12 @@ func New(tailnet string) (*Client, error) {
 	}
 
 	// Fall back to API key
-	apiKey := os.Getenv("TSKEY")
+	apiKey := os.Getenv("TS_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("authentication required: set TSKEY or TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET")
+		apiKey = os.Getenv("TSKEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("authentication required: set TS_API_KEY or TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET")
 	}
 
 	ts := tailscale.NewClient(tailnet, tailscale.APIKey(apiKey))

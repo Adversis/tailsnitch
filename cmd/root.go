@@ -50,7 +50,7 @@ Checks your tailnet against Tailscale's best practices and recommendations.
 
 Use --fix to enter interactive remediation mode for the items that are straightforward to fix via API.
 
-Set TSKEY environment variable with Tailscale API key.`,
+Set TS_API_KEY environment variable with Tailscale API key.`,
 	Version: Version,
 	RunE:    runAudit,
 }

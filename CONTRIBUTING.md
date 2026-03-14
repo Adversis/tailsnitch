@@ -34,7 +34,7 @@ go vet ./...
 
 ```bash
 # Set your Tailscale API key
-export TSKEY="tskey-api-..."
+export TS_API_KEY="tskey-api-..."
 
 # Run the auditor
 ./tailsnitch

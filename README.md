@@ -6,7 +6,7 @@ A security auditor for Tailscale configurations. Tailsnitch scans your tailnet f
 
 ```bash
 # 1. Set your Tailscale API credentials
-export TSKEY="tskey-api-..."
+export TS_API_KEY="tskey-api-..."
 
 # 2. Run audit
 tailsnitch
@@ -74,7 +74,7 @@ Create an OAuth client at: https://login.tailscale.com/admin/settings/oauth
 API keys operate as the user who created them and inherit that user's permissions.
 
 ```bash
-export TSKEY="tskey-api-..."
+export TS_API_KEY="tskey-api-..."
 ```
 
 Create an API key at: https://login.tailscale.com/admin/settings/keys

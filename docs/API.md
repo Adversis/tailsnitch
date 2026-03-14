@@ -190,7 +190,7 @@ Wrapper around the official Tailscale Go client.
 ```go
 import "github.com/Adversis/tailsnitch/pkg/client"
 
-// Requires TSKEY environment variable
+// Requires TS_API_KEY environment variable
 c, err := client.New("your-tailnet")
 if err != nil {
     log.Fatal(err)
@@ -469,7 +469,7 @@ Tailsnitch supports two authentication methods. OAuth is preferred when both are
 
 | Variable | Description |
 |----------|-------------|
-| `TSKEY` | Tailscale API key |
+| `TS_API_KEY` | Tailscale API key |
 
 ## API Permissions
 
