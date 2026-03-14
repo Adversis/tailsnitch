@@ -173,7 +173,7 @@ func printSuggestion(w io.Writer, s types.Suggestion) {
 	fmt.Fprintln(w)
 }
 
-func printDetails(w io.Writer, details interface{}) {
+func printDetails(w io.Writer, details any) {
 	switch d := details.(type) {
 	case []string:
 		if len(d) > 0 {
@@ -183,7 +183,7 @@ func printDetails(w io.Writer, details interface{}) {
 			}
 			fmt.Fprintln(w)
 		}
-	case map[string]interface{}:
+	case map[string]any:
 		if len(d) > 0 {
 			fmt.Fprintf(w, "  %s\n", headerColor.Sprint("Details:"))
 			for k, v := range d {
