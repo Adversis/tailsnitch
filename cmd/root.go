@@ -297,7 +297,8 @@ func customHelp(cmd *cobra.Command, args []string) {
 		versionStr = fmt.Sprintf("%s (%s)", Version, BuildID)
 	}
 	fmt.Printf("  Version: %s\n", versionStr)
-	fmt.Println("  by Adversis")
+	fmt.Println("  by Adversis — security and compliance for SaaS teams")
+	fmt.Println("  https://adversis.io")
 	fmt.Println()
 
 	// Print default help

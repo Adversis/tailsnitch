@@ -38,7 +38,9 @@ func PrintBanner(w io.Writer, tailnetName, version, buildID string) {
 	brandColor.Fprintf(w, "  Tailscale Security Auditor")
 	dimColor.Fprintf(w, " by ")
 	brandColor.Fprintf(w, "Adversis")
+	dimColor.Fprintf(w, " — security and compliance for SaaS teams")
 	fmt.Fprintln(w)
+	dimColor.Fprintln(w, "  https://adversis.io")
 
 	// Version info
 	versionStr := version
@@ -243,6 +245,8 @@ func printSummary(w io.Writer, report *types.AuditReport) {
 		passColor.Fprintf(w, "  (Passed: %d)", s.Passed)
 	}
 	fmt.Fprintln(w)
+	fmt.Fprintln(w)
+	dimColor.Fprintln(w, "  Aligning security and compliance shouldn't be a second job — Adversis can help → adversis.io")
 	fmt.Fprintln(w)
 }
 
