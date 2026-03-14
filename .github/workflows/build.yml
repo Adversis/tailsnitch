@@ -18,7 +18,12 @@ jobs:
           go-version: '1.21'
 
       - name: Build
-        run: go build -v ./...
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          BUILD_ID=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-X github.com/Adversis/tailsnitch/cmd.Version=$VERSION -X github.com/Adversis/tailsnitch/cmd.BuildID=$BUILD_ID -X github.com/Adversis/tailsnitch/cmd.BuildDate=$BUILD_DATE"
+          go build -v -ldflags="$LDFLAGS" ./...
 
       - name: Test
         run: go test -v ./...
