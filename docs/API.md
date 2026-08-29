@@ -183,20 +183,24 @@ ids, err := types.DefaultRegistry.ResolveAll([]string{"ACL-001", "auth-keys-exis
 
 ## pkg/client
 
-Wrapper around the official Tailscale Go client.
+Wrapper around `tailscale.com/client/tailscale/v2`, the official Tailscale API
+client. It adds client-side rate limiting, typed error classification, and a
+few reads the typed client does not model.
 
 ### Creating a Client
+
+Credentials come from the environment: `TS_OAUTH_CLIENT_ID` plus
+`TS_OAUTH_CLIENT_SECRET` if both are set, otherwise `TS_API_KEY`.
 
 ```go
 import "github.com/Adversis/tailsnitch/pkg/client"
 
-// Requires TS_API_KEY environment variable
 c, err := client.New("your-tailnet")
 if err != nil {
     log.Fatal(err)
 }
 
-// Use "-" for default tailnet
+// Use "-" for the credential's default tailnet
 c, err := client.New("-")
 ```
 
@@ -207,27 +211,68 @@ c, err := client.New("-")
 func (c *Client) Tailnet() string
 
 // ACL Policy
-func (c *Client) GetACL(ctx context.Context) (*tailscale.ACL, error)
-func (c *Client) GetACLHuJSON(ctx context.Context) (*tailscale.ACLHuJSON, error)
-func (c *Client) SetACLHuJSON(ctx context.Context, acl *tailscale.ACLHuJSON) (*tailscale.ACLHuJSON, error)
+func (c *Client) GetACL(ctx context.Context) (*ACL, error)
+func (c *Client) GetACLHuJSON(ctx context.Context) (*RawACL, error)
+func (c *Client) SetACLHuJSON(ctx context.Context, acl *RawACL) error
+func (c *Client) SetACLHuJSONWithCollisionCheck(ctx context.Context, acl *RawACL) error
 
-// Devices
-func (c *Client) GetDevices(ctx context.Context) ([]*tailscale.Device, error)
-func (c *Client) GetDevice(ctx context.Context, deviceID string) (*tailscale.Device, error)
+// Devices (always requested with fields=all)
+func (c *Client) GetDevices(ctx context.Context) ([]*Device, error)
+func (c *Client) GetDevice(ctx context.Context, deviceID string) (*Device, error)
 func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error
 func (c *Client) AuthorizeDevice(ctx context.Context, deviceID string) error
 func (c *Client) SetDeviceTags(ctx context.Context, deviceID string, tags []string) error
-func (c *Client) GetDeviceRoutes(ctx context.Context, deviceID string) (*tailscale.Routes, error)
+func (c *Client) GetDeviceRoutes(ctx context.Context, deviceID string) (*DeviceRoutes, error)
 
-// Auth Keys
-func (c *Client) GetKeys(ctx context.Context) ([]string, error)
-func (c *Client) GetKey(ctx context.Context, keyID string) (*tailscale.Key, error)
+// Keys (always listed with all=true)
+func (c *Client) GetKeys(ctx context.Context) ([]Key, error)          // every key type
+func (c *Client) GetAuthKeys(ctx context.Context) ([]Key, error)      // machine auth keys only
+func (c *Client) GetOAuthClients(ctx context.Context) ([]Key, error)  // OAuth clients only
+func (c *Client) GetKey(ctx context.Context, keyID string) (*Key, error)
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error
-func (c *Client) CreateKey(ctx context.Context, caps tailscale.KeyCapabilities) (string, *tailscale.Key, error)
-func (c *Client) CreateKeyWithExpiry(ctx context.Context, caps tailscale.KeyCapabilities, expiry time.Duration) (string, *tailscale.Key, error)
+func (c *Client) CreateKey(ctx context.Context, caps KeyCapabilities) (string, *Key, error)
+func (c *Client) CreateKeyWithExpiry(ctx context.Context, caps KeyCapabilities, expiry time.Duration) (string, *Key, error)
+
+// Tailnet-wide state
+func (c *Client) GetTailnetSettings(ctx context.Context) (*TailnetSettings, error)
+func (c *Client) GetUsers(ctx context.Context) ([]User, error)
+func (c *Client) GetWebhooks(ctx context.Context) ([]Webhook, error)
+func (c *Client) GetContacts(ctx context.Context) (*Contacts, error)
+func (c *Client) GetPostureIntegrations(ctx context.Context) ([]PostureIntegration, error)
+func (c *Client) HasLogstream(ctx context.Context, logType LogType) (bool, error)
 
 // DNS
 func (c *Client) GetDNSConfig(ctx context.Context) (*DNSConfig, error)
+```
+
+Two request parameters matter enough to be worth stating:
+
+- **Devices are fetched with `fields=all`.** The API's default field set omits
+  `advertisedRoutes`, `enabledRoutes`, `sshEnabled`, `postureIdentity` and
+  `clientConnectivity`, which the network and device checks read.
+- **Keys are listed with `all=true`.** Without it the endpoint returns only the
+  calling user's own keys, and for an OAuth-derived token it returns the
+  tailnet's OAuth clients rather than its auth keys. `GetAuthKeys` filters to
+  `keyType == "auth"` and drops revoked and invalidated keys.
+
+### Device Type
+
+`Device` embeds the API client's device model and adds fields it does not
+model yet:
+
+```go
+type Device struct {
+    tsapi.Device
+
+    // MultipleConnections reports that several devices are connected using
+    // this node key, which usually means node state was copied between
+    // machines. Omitted by the API when only one connection is live.
+    MultipleConnections bool
+}
+
+// LastSeenTime returns the last-seen timestamp and whether one is set. The API
+// omits lastSeen for devices currently connected to control.
+func (d *Device) LastSeenTime() (time.Time, bool)
 ```
 
 ### DNSConfig Type
@@ -246,7 +291,10 @@ Security audit orchestration.
 
 ### Tailscale Binary Configuration
 
-For Tailnet Lock checks (DEV-010, DEV-012), the auditor needs to execute the local `tailscale` CLI binary. You can specify a custom path:
+Tailnet lock state is not exposed by the Tailscale API, so the Tailnet Lock
+checks (DEV-010, DEV-012) run `tailscale lock status --json` against the local
+daemon. Devices locked out by tailnet lock are visible through the API and are
+reported without the CLI. You can specify a custom path to the binary:
 
 ```go
 import "github.com/Adversis/tailsnitch/pkg/auditor"
@@ -266,6 +314,24 @@ If no custom path is set, the auditor searches these locations in order:
 4. `/snap/bin/tailscale` (Ubuntu Snap)
 5. `/usr/sbin/tailscale`
 6. PATH lookup (with current directory rejection for security)
+
+### TailnetContext
+
+Several checks read tailnet-wide state (settings, users, webhooks, contacts,
+posture integrations, log stream configuration, OAuth clients). `Auditor.Run`
+fetches it once and shares it, rather than having each parallel auditor
+re-request it.
+
+```go
+tc := auditor.FetchTailnetContext(ctx, c)
+```
+
+`FetchTailnetContext` never returns an error. A credential scoped for a
+read-only audit may legitimately lack access to some of these resources, so a
+failure is recorded on the matching `*Err` field and leaves the rest usable.
+Checks whose input is missing report that they could not read the setting; they
+do not pass. Passing `nil` where a `*TailnetContext` is expected makes the
+auditor fetch its own.
 
 ### Running an Audit
 
@@ -310,21 +376,21 @@ findings, err := aclAuditor.Audit(ctx)
 authAuditor := auditor.NewAuthAuditor(c)
 findings, err := authAuditor.Audit(ctx)
 
-// Device auditor
+// Device auditor (nil TailnetContext fetches its own)
 deviceAuditor := auditor.NewDeviceAuditor(c)
-findings, err := deviceAuditor.Audit(ctx)
+findings, err := deviceAuditor.Audit(ctx, nil)
 
-// Network auditor (requires ACL policy)
+// Network auditor (requires ACL policy; nil TailnetContext fetches its own)
 networkAuditor := auditor.NewNetworkAuditor(c)
-findings, err := networkAuditor.Audit(ctx, policy)
+findings, err := networkAuditor.Audit(ctx, policy, nil)
 
 // SSH auditor (requires ACL policy)
 sshAuditor := auditor.NewSSHAuditor(c)
 findings, err := sshAuditor.Audit(ctx, policy)
 
-// Logging auditor
+// Logging auditor (nil TailnetContext fetches its own)
 loggingAuditor := auditor.NewLoggingAuditor(c)
-findings, err := loggingAuditor.Audit(ctx)
+findings, err := loggingAuditor.Audit(ctx, nil)
 
 // DNS auditor
 dnsAuditor := auditor.NewDNSAuditor(c)
@@ -473,10 +539,25 @@ Tailsnitch supports two authentication methods. OAuth is preferred when both are
 
 ## API Permissions
 
-Read access required:
-- ACL policy (`policy_file:read`)
-- Devices (`devices:core:read`)
-- Auth keys (`auth_keys:read`, optional for AUTH-* checks)
-- DNS settings (`dns:read`)
+`all:read` covers a full read-only audit. Granting scopes individually:
 
-For fix mode, also need: `devices:core:write`, `auth_keys:write`
+| Scope | Used for |
+|-------|----------|
+| `policy_file:read` | Tailnet policy file |
+| `devices:core:read` | Device list |
+| `dns:read` | DNS configuration |
+| `auth_keys:read` | Machine auth keys |
+| `feature_settings:read` | Tailnet settings |
+| `logs:network:read` | Network flow logging setting |
+| `networking_settings:read` | HTTPS certificate setting |
+| `log_streaming:read` | Log stream destinations |
+| `webhooks:read` | Webhook endpoints |
+| `oauth_keys:read` | OAuth clients |
+| `users:read` | User roles and status |
+| `account_settings:read` | Security contact |
+| `devices:posture_attributes:read` | Posture integrations |
+
+Omitting a scope only affects the checks that need it: those report that they
+could not read the setting rather than passing.
+
+For fix mode, also grant `devices:core` and `auth_keys`.
