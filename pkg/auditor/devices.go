@@ -3,6 +3,7 @@ package auditor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -237,13 +238,13 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, d.checkDeviceApproval(devices))
 
 	// DEV-010: Tailnet Lock status
-	findings = append(findings, d.checkTailnetLock(ctx))
+	findings = append(findings, d.checkTailnetLock(ctx, devices))
 
 	// DEV-011: Unique users in tailnet
 	findings = append(findings, d.checkUniqueUsers(devices))
 
 	// DEV-012: Nodes awaiting Tailnet Lock signature
-	findings = append(findings, d.checkTailnetLockPending(ctx))
+	findings = append(findings, d.checkTailnetLockPending(ctx, devices))
 
 	// DEV-013: User devices with key expiry disabled
 	findings = append(findings, d.checkUserDevicesKeyExpiryDisabled(devices))
@@ -863,7 +864,74 @@ func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device) types.Sugg
 	return finding
 }
 
-func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
+// tailnetLockStatus is the subset of `tailscale lock status --json` this tool
+// consumes. Field names match the JSON emitted by the CLI, which serializes
+// ipnstate.NetworkLockStatus without struct tags.
+type tailnetLockStatus struct {
+	Enabled       bool
+	NodeKeySigned bool
+	TrustedKeys   []struct {
+		Key string
+	}
+	FilteredPeers []struct {
+		Name         string
+		StableID     string
+		TailscaleIPs []string
+	}
+}
+
+// readTailnetLockStatus asks the local tailscaled for tailnet lock state.
+//
+// The JSON form is used deliberately: the human-readable output prints
+// "Tailnet lock is NOT enabled." for the disabled case, which any substring
+// test for "enabled" matches, and `tailscale lock status` exits 0 either way.
+func readTailnetLockStatus(ctx context.Context) (*tailnetLockStatus, error) {
+	tsBinary, err := findTailscaleBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status", "--json")
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+
+	return parseTailnetLockStatus(output)
+}
+
+// parseTailnetLockStatus decodes the JSON emitted by `tailscale lock status --json`.
+func parseTailnetLockStatus(output []byte) (*tailnetLockStatus, error) {
+	var status tailnetLockStatus
+	if err := json.Unmarshal(output, &status); err != nil {
+		return nil, fmt.Errorf("could not parse 'tailscale lock status --json' output: %w", err)
+	}
+	return &status, nil
+}
+
+// lockedOutDevices returns devices the API reports as having a tailnet lock
+// signature problem. tailnetLockError is only populated when tailnet lock is
+// enabled, so a non-empty value also proves lock is on for the audited tailnet.
+func lockedOutDevices(devices []*client.Device) []*client.Device {
+	var out []*client.Device
+	for _, dev := range devices {
+		if strings.TrimSpace(dev.TailnetLockError) != "" {
+			out = append(out, dev)
+		}
+	}
+	return out
+}
+
+// localCheckNote explains that the CLI reads the local machine's daemon, which
+// may not be joined to the tailnet being audited.
+const localCheckNote = "NOTE: 'tailscale lock status' reads the LOCAL machine's daemon. " +
+	"If you are auditing a different tailnet via --tailnet, verify lock status on that tailnet directly."
+
+func (d *DeviceAuditor) checkTailnetLock(ctx context.Context, devices []*client.Device) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-010",
 		Title:       "Tailnet Lock not enabled",
@@ -875,164 +943,77 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
 		Pass:        true,
 	}
 
-	// Find tailscale binary using secure path resolution
-	tsBinary, err := findTailscaleBinary()
+	// A device carrying a tailnet lock error proves lock is enabled on the
+	// tailnet being audited, without depending on the local daemon.
+	if locked := lockedOutDevices(devices); len(locked) > 0 {
+		finding.Pass = true
+		finding.Description = fmt.Sprintf("Tailnet Lock is enabled: %d device(s) report a tailnet lock signature state, which the API only returns when lock is active.", len(locked))
+		finding.Details = []string{"Confirmed via the Tailscale API (device tailnetLockError field).", "See DEV-012 for the devices awaiting a signature."}
+		return finding
+	}
+
+	status, err := readTailnetLockStatus(ctx)
 	if err != nil {
 		finding.Pass = false
 		finding.Severity = types.Informational
-		finding.Description = "Cannot check Tailnet Lock status: " + err.Error()
+		finding.Description = "Could not determine Tailnet Lock status: " + err.Error()
 		finding.Details = []string{
-			"The tailscale CLI binary could not be located securely.",
+			"Tailnet Lock state is not exposed by the Tailscale API, so this check needs the local tailscale CLI.",
 			"",
-			"NOTE: This check runs on the LOCAL machine and may not reflect",
-			"the status of the tailnet being audited via --tailnet flag.",
-			"",
-			"To check Tailnet Lock status manually:",
+			"To check manually:",
 			"  1. Install Tailscale CLI: https://tailscale.com/download",
 			"  2. Run: tailscale lock status",
 			"",
-			"See: https://tailscale.com/kb/1226/tailnet-lock",
+			"Use --tailscale-path to point at a CLI in a non-standard location.",
+			"",
+			localCheckNote,
 		}
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
-			Description: "Install tailscale CLI and run 'tailscale lock init'",
+			Description: "Install the tailscale CLI, then run 'tailscale lock status'",
 			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
 		}
 		return finding
 	}
 
-	// Try to run tailscale lock status
-	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		// Check if it's a "command not found" error
-		if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
-			finding.Pass = false
-			finding.Severity = types.Informational
-			finding.Description = "Cannot check Tailnet Lock status: tailscale CLI not found."
-			finding.Details = []string{
-				"The tailscale CLI binary was not found in PATH.",
-				"",
-				"To check Tailnet Lock status manually:",
-				"  1. Install Tailscale CLI: https://tailscale.com/download",
-				"  2. Run: tailscale lock status",
-				"",
-				"To enable Tailnet Lock:",
-				"  1. Ensure tailscale CLI is installed on a trusted node",
-				"  2. Run: tailscale lock init",
-				"  3. Add signing keys from other trusted nodes",
-				"",
-				"See: https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			finding.Fix = &types.FixInfo{
-				Type:        types.FixTypeExternal,
-				Description: "Install tailscale CLI and run 'tailscale lock init'",
-				DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			return finding
-		}
-
-		// Check for exit status indicating lock is not enabled
-		outputStr := string(output)
-
-		// "tailscale lock status" returns exit code 1 with specific message when not enabled
-		if strings.Contains(outputStr, "disabled") ||
-			strings.Contains(outputStr, "not enabled") ||
-			strings.Contains(outputStr, "Tailnet lock is NOT enabled") {
-			finding.Pass = false
-			finding.Description = "Tailnet Lock is not enabled. Attackers with stolen auth keys can add unauthorized devices."
-			finding.Details = []string{
-				"Tailnet Lock prevents unauthorized device additions even if auth keys are compromised.",
-				"",
-				"Current status: DISABLED",
-				"",
-				"To enable Tailnet Lock:",
-				"  1. On a trusted node, run: tailscale lock init",
-				"  2. This generates a signing key for that node",
-				"  3. Add signing keys from additional trusted nodes: tailscale lock add <nodekey>",
-				"  4. Once enabled, new devices require signatures from existing trusted nodes",
-				"",
-				"WARNING: Enabling Tailnet Lock is a significant security change.",
-				"Ensure you understand the key rotation and recovery procedures.",
-			}
-			finding.Fix = &types.FixInfo{
-				Type:        types.FixTypeExternal,
-				Description: "Enable Tailnet Lock by running 'tailscale lock init' on a trusted node",
-				DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			return finding
-		}
-
-		// Other errors - connection issues, permission denied, etc.
+	if !status.Enabled {
 		finding.Pass = false
-		finding.Severity = types.Informational
-		finding.Description = "Cannot determine Tailnet Lock status due to an error."
+		finding.Description = "Tailnet Lock is not enabled. Attackers with stolen auth keys can add unauthorized devices."
 		finding.Details = []string{
-			fmt.Sprintf("Error running 'tailscale lock status': %v", err),
-			fmt.Sprintf("Output: %s", strings.TrimSpace(outputStr)),
+			"Current status: DISABLED",
 			"",
-			"Possible causes:",
-			"  - Tailscale daemon not running (start with: sudo tailscaled)",
-			"  - Insufficient permissions (try running as root/admin)",
-			"  - Network connectivity issues",
+			"To enable Tailnet Lock:",
+			"  1. On a trusted node, run: tailscale lock init",
+			"  2. Add signing keys from additional trusted nodes: tailscale lock add <tlpub-key>",
+			"  3. Once enabled, new devices require signatures from existing trusted nodes",
 			"",
-			"To check manually, run: tailscale lock status",
+			"WARNING: Enabling Tailnet Lock is a significant security change.",
+			"Ensure you understand the key rotation and recovery procedures first.",
+			"",
+			localCheckNote,
 		}
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
-			Description: "Verify tailscale daemon is running and check 'tailscale lock status'",
+			Description: "Enable Tailnet Lock by running 'tailscale lock init' on a trusted node",
 			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
 		}
 		return finding
 	}
 
-	// Command succeeded - parse output
-	outputStr := string(output)
-
-	// Check if lock is enabled
-	if strings.Contains(outputStr, "enabled") ||
-		strings.Contains(outputStr, "Tailnet lock is enabled") {
-		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled (local check). Devices require cryptographic signing from trusted nodes."
-
-		// Extract some useful info if available
-		var details []string
-		details = append(details, "Status: ENABLED (checked via local tailscale CLI)")
-		details = append(details, "")
-		details = append(details, "NOTE: This check runs on the LOCAL machine. If auditing a remote")
-		details = append(details, "tailnet via --tailnet, verify lock status on that tailnet directly.")
-
-		// Try to extract key count or other info
-		lines := strings.Split(outputStr, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "key") || strings.Contains(line, "signing") {
-				details = append(details, line)
-			}
-		}
-
-		if len(details) > 1 {
-			finding.Details = details
-		}
-		return finding
-	}
-
-	// Output doesn't clearly indicate enabled/disabled - report what we got
-	finding.Pass = false
-	finding.Severity = types.Informational
-	finding.Description = "Tailnet Lock status unclear. Manual verification recommended."
+	finding.Pass = true
+	finding.Description = fmt.Sprintf("Tailnet Lock is enabled with %d trusted signing key(s). Devices require cryptographic signing from trusted nodes.", len(status.TrustedKeys))
 	finding.Details = []string{
-		"Output from 'tailscale lock status':",
-		strings.TrimSpace(outputStr),
+		"Status: ENABLED",
+		fmt.Sprintf("Trusted signing keys: %d", len(status.TrustedKeys)),
 		"",
-		"Please verify Tailnet Lock status manually.",
-		"To enable: tailscale lock init",
+		localCheckNote,
 	}
-	finding.Fix = &types.FixInfo{
-		Type:        types.FixTypeExternal,
-		Description: "Verify Tailnet Lock status and enable if needed",
-		DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+	if len(status.TrustedKeys) < 2 {
+		finding.Pass = false
+		finding.Severity = types.Medium
+		finding.Title = "Tailnet Lock has a single signing key"
+		finding.Description = "Tailnet Lock is enabled but only one trusted signing key exists. Losing that key locks the tailnet out of adding devices."
+		finding.Remediation = "Add signing keys from at least one additional trusted node: tailscale lock add <tlpub-key>"
 	}
 
 	return finding
@@ -1090,7 +1071,7 @@ func (d *DeviceAuditor) checkUniqueUsers(devices []*client.Device) types.Suggest
 	return finding
 }
 
-func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Suggestion {
+func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context, devices []*client.Device) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-012",
 		Title:       "Nodes awaiting Tailnet Lock signature",
@@ -1102,83 +1083,61 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Sugge
 		Pass:        true,
 	}
 
-	// Find tailscale binary using secure path resolution
-	tsBinary, err := findTailscaleBinary()
-	if err != nil {
-		// Can't find binary, skip this check
-		finding.Pass = true
-		finding.Description = "Tailnet Lock pending check skipped (CLI unavailable)."
-		finding.Details = []string{
-			"This check only applies when Tailnet Lock is enabled.",
-			"NOTE: This check runs on the LOCAL machine.",
-		}
-		return finding
+	// The API reports per-device lock signature problems, which reflects the
+	// tailnet actually being audited rather than the local machine's tailnet.
+	var pending []string
+	seen := make(map[string]bool)
+	for _, dev := range lockedOutDevices(devices) {
+		seen[dev.Name] = true
+		pending = append(pending, fmt.Sprintf("%s (%s): %s", dev.Name, dev.Hostname, strings.TrimSpace(dev.TailnetLockError)))
 	}
 
-	// Try to run tailscale lock status for detailed info
-	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		// If lock is not enabled or command fails, skip this check
-		finding.Pass = true
-		finding.Description = "Tailnet Lock status check skipped (lock not enabled or CLI unavailable)."
-		finding.Details = "This check only applies when Tailnet Lock is enabled."
-		return finding
-	}
-
-	outputStr := string(output)
-
-	// Check if there are pending signatures
-	if strings.Contains(outputStr, "awaiting") ||
-		strings.Contains(outputStr, "pending") ||
-		strings.Contains(outputStr, "needs signature") {
-
-		finding.Pass = false
-		finding.Description = "There are nodes awaiting Tailnet Lock signatures. Review and sign legitimate nodes."
-
-		// Extract relevant lines
-		var pendingLines []string
-		lines := strings.Split(outputStr, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "await") || strings.Contains(line, "pending") || strings.Contains(line, "needs") {
-				pendingLines = append(pendingLines, line)
-			}
-		}
-
-		if len(pendingLines) > 0 {
-			finding.Details = pendingLines
-		} else {
+	// Supplement with the local daemon's view, which also knows whether this
+	// node itself is awaiting a signature.
+	status, err := readTailnetLockStatus(ctx)
+	switch {
+	case err != nil:
+		if len(pending) == 0 {
+			finding.Pass = true
+			finding.Description = "No devices report a Tailnet Lock signature problem."
 			finding.Details = []string{
-				"Nodes are awaiting signatures.",
-				"Run 'tailscale lock status' for details.",
-				"Sign with: tailscale lock sign <nodekey>",
+				fmt.Sprintf("The local tailscale CLI was not consulted: %v", err),
+				"Devices locked out by tailnet lock would still be reported by the API.",
 			}
+			return finding
 		}
-
-		finding.Fix = &types.FixInfo{
-			Type:        types.FixTypeExternal,
-			Description: "Review pending nodes with 'tailscale lock status' and sign legitimate ones",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+	case !status.Enabled:
+		if len(pending) == 0 {
+			finding.Pass = true
+			finding.Description = "Tailnet Lock is not enabled, so no nodes are awaiting signatures."
+			finding.Details = []string{localCheckNote}
+			return finding
 		}
-		return finding
+	default:
+		for _, peer := range status.FilteredPeers {
+			if seen[peer.Name] {
+				continue
+			}
+			pending = append(pending, fmt.Sprintf("%s (%s): locked out by tailnet lock", peer.Name, strings.Join(peer.TailscaleIPs, ",")))
+		}
+		if !status.NodeKeySigned {
+			pending = append(pending, "this machine: its own node key is not signed, so it is locked out")
+		}
 	}
 
-	// Check if lock is enabled but no pending nodes
-	if strings.Contains(outputStr, "enabled") {
+	if len(pending) == 0 {
 		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures (local check)."
-		finding.Details = "NOTE: This check runs on the LOCAL machine. If auditing a remote tailnet, verify directly."
+		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures."
 		return finding
 	}
 
-	// Lock not enabled - skip this check
-	finding.Pass = true
-	finding.Description = "Tailnet Lock is not enabled. Enable it to require device signing."
-	finding.Details = []string{
-		"This check only reports pending signatures when Tailnet Lock is active.",
-		"NOTE: This check runs on the LOCAL machine.",
+	finding.Pass = false
+	finding.Details = pending
+	finding.Description = fmt.Sprintf("Found %d node(s) with an unresolved Tailnet Lock signature. Review and sign legitimate nodes.", len(pending))
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeExternal,
+		Description: "Review with 'tailscale lock status' and sign legitimate nodes: tailscale lock sign <nodekey>",
+		DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
 	}
 	return finding
 }

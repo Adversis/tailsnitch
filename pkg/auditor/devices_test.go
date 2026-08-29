@@ -1,6 +1,7 @@
 package auditor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -974,4 +975,117 @@ func TestFindTailscaleBinarySecurityChecks(t *testing.T) {
 			t.Errorf("tailscaleBinaryOverride = %q is not absolute", tailscaleBinaryOverride)
 		}
 	})
+}
+
+func TestParseTailnetLockStatus(t *testing.T) {
+	// Regression: `tailscale lock status` exits 0 and prints "Tailnet lock is
+	// NOT enabled." when lock is off. Any substring test for "enabled" matches
+	// that string, so DEV-010 used to report a pass for a disabled tailnet.
+	// The JSON form is unambiguous.
+	tests := []struct {
+		name           string
+		output         string
+		wantEnabled    bool
+		wantTrusted    int
+		wantFiltered   int
+		wantNodeSigned bool
+	}{
+		{
+			name:        "lock disabled",
+			output:      `{"Enabled":false,"PublicKey":"tlpub:abc","NodeKeySigned":false}`,
+			wantEnabled: false,
+		},
+		{
+			name:           "lock enabled and node signed",
+			output:         `{"Enabled":true,"NodeKeySigned":true,"TrustedKeys":[{"Key":"tlpub:abc"},{"Key":"tlpub:def"}]}`,
+			wantEnabled:    true,
+			wantTrusted:    2,
+			wantNodeSigned: true,
+		},
+		{
+			name:           "lock enabled with locked-out peers",
+			output:         `{"Enabled":true,"NodeKeySigned":true,"TrustedKeys":[{"Key":"tlpub:abc"}],"FilteredPeers":[{"Name":"rogue","StableID":"n1","TailscaleIPs":["100.64.0.9"]}]}`,
+			wantEnabled:    true,
+			wantTrusted:    1,
+			wantFiltered:   1,
+			wantNodeSigned: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseTailnetLockStatus([]byte(tt.output))
+			if err != nil {
+				t.Fatalf("parseTailnetLockStatus() error = %v", err)
+			}
+			if got.Enabled != tt.wantEnabled {
+				t.Errorf("Enabled = %v, want %v", got.Enabled, tt.wantEnabled)
+			}
+			if len(got.TrustedKeys) != tt.wantTrusted {
+				t.Errorf("TrustedKeys = %d, want %d", len(got.TrustedKeys), tt.wantTrusted)
+			}
+			if len(got.FilteredPeers) != tt.wantFiltered {
+				t.Errorf("FilteredPeers = %d, want %d", len(got.FilteredPeers), tt.wantFiltered)
+			}
+			if got.NodeKeySigned != tt.wantNodeSigned {
+				t.Errorf("NodeKeySigned = %v, want %v", got.NodeKeySigned, tt.wantNodeSigned)
+			}
+		})
+	}
+}
+
+func TestLockedOutDevices(t *testing.T) {
+	devices := []*client.Device{
+		{Device: tsapi.Device{Name: "ok", TailnetLockError: ""}},
+		{Device: tsapi.Device{Name: "unsigned", TailnetLockError: "node key is not signed"}},
+		{Device: tsapi.Device{Name: "blank", TailnetLockError: "   "}},
+	}
+
+	got := lockedOutDevices(devices)
+	if len(got) != 1 {
+		t.Fatalf("lockedOutDevices() returned %d devices, want 1", len(got))
+	}
+	if got[0].Name != "unsigned" {
+		t.Errorf("lockedOutDevices() = %q, want %q", got[0].Name, "unsigned")
+	}
+}
+
+func TestCheckTailnetLockDetectsEnabledFromAPI(t *testing.T) {
+	d := &DeviceAuditor{}
+
+	// tailnetLockError is only populated when tailnet lock is enabled, so its
+	// presence proves lock is on for the tailnet being audited, with no
+	// dependence on the local daemon.
+	devices := []*client.Device{
+		{Device: tsapi.Device{Name: "unsigned", TailnetLockError: "node key is not signed"}},
+	}
+
+	got := d.checkTailnetLock(context.Background(), devices)
+	if !got.Pass {
+		t.Errorf("checkTailnetLock() Pass = false, want true when a device reports a lock error")
+	}
+	if got.ID != "DEV-010" {
+		t.Errorf("checkTailnetLock() ID = %q, want DEV-010", got.ID)
+	}
+}
+
+func TestCheckTailnetLockPendingReportsAPILockouts(t *testing.T) {
+	d := &DeviceAuditor{}
+
+	devices := []*client.Device{
+		{Device: tsapi.Device{Name: "ok"}},
+		{Device: tsapi.Device{Name: "rogue", Hostname: "rogue.local", TailnetLockError: "node key is not signed"}},
+	}
+
+	got := d.checkTailnetLockPending(context.Background(), devices)
+	if got.Pass {
+		t.Errorf("checkTailnetLockPending() Pass = true, want false when a device is locked out")
+	}
+	details, ok := got.Details.([]string)
+	if !ok || len(details) == 0 {
+		t.Fatalf("checkTailnetLockPending() Details = %#v, want a non-empty []string", got.Details)
+	}
+	if !strings.Contains(details[0], "rogue") {
+		t.Errorf("checkTailnetLockPending() details = %q, want it to name the locked-out device", details[0])
+	}
 }
