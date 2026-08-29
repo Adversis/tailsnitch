@@ -19,8 +19,15 @@ func NewNetworkAuditor(c *client.Client) *NetworkAuditor {
 	return &NetworkAuditor{client: c}
 }
 
-// Audit performs network exposure security checks
-func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy) ([]types.Suggestion, error) {
+// Audit performs network exposure security checks.
+//
+// tc carries tailnet-wide state shared with the other auditors. When nil, it is
+// fetched here so an individual auditor can be run on its own.
+func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy, tc *TailnetContext) ([]types.Suggestion, error) {
+	if tc == nil {
+		tc = FetchTailnetContext(ctx, n.client)
+	}
+
 	var findings []types.Suggestion
 
 	devices, err := n.client.GetDevices(ctx)
@@ -38,7 +45,7 @@ func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy) ([]types.S
 	findings = append(findings, n.checkSubnetRoutes(ctx, devices))
 
 	// NET-004: Check for HTTPS/Certificate Transparency exposure
-	findings = append(findings, n.checkHTTPSExposure(policy))
+	findings = append(findings, n.checkHTTPSExposure(policy, tc))
 
 	// NET-005: Check for exit nodes
 	findings = append(findings, n.checkExitNodes(devices))
@@ -199,7 +206,7 @@ func (n *NetworkAuditor) checkSubnetRoutes(ctx context.Context, devices []*clien
 	return finding
 }
 
-func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
+func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "NET-004",
 		Title:       "HTTPS certificates publish names to CT logs",
@@ -211,7 +218,32 @@ func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
 		Pass:        true,
 	}
 
-	// Check if HTTPS-related nodeAttrs are configured
+	// The tailnet setting is authoritative: HTTPS certificate provisioning is a
+	// tailnet-wide switch, not something inferred from nodeAttrs.
+	if settings := tc.settings(); settings != nil {
+		if !settings.HTTPSEnabled {
+			finding.Severity = types.Informational
+			finding.Description = "HTTPS certificate provisioning is disabled for this tailnet, so machine names are not published to Certificate Transparency logs."
+			finding.Details = "Confirmed via the Tailscale API (httpsEnabled is false)."
+			return finding
+		}
+
+		finding.Pass = false
+		finding.Description = "HTTPS certificate provisioning is enabled. Every machine name a certificate is issued for is published to public Certificate Transparency logs."
+		finding.Details = []string{
+			"Confirmed via the Tailscale API (httpsEnabled is true).",
+			"See DEV-007 for machine names that look sensitive.",
+		}
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeManual,
+			Description: "Review machine names, or disable HTTPS certificates if unused",
+			AdminURL:    "https://login.tailscale.com/admin/dns",
+			DocURL:      "https://tailscale.com/kb/1153/enabling-https",
+		}
+		return finding
+	}
+
+	// Without the setting, fall back to looking for HTTPS-related nodeAttrs.
 	var httpsConfigs []string
 	for _, attr := range policy.NodeAttrs {
 		for _, a := range attr.Attr {
@@ -234,7 +266,7 @@ func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
 	} else {
 		// This is informational - HTTPS might be enabled at the tailnet level
 		finding.Severity = types.Informational
-		finding.Description = "HTTPS configuration not found in nodeAttrs. If HTTPS is enabled at tailnet level, machine names are published to CT logs."
+		finding.Description = "Could not read the tailnet HTTPS setting and found no HTTPS-related nodeAttrs. If HTTPS certificates are enabled, machine names are published to CT logs."
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Review HTTPS/DNS settings",
