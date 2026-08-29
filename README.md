@@ -59,15 +59,40 @@ export TS_OAUTH_CLIENT_SECRET="tskey-client-..."
 Create an OAuth client at: https://login.tailscale.com/admin/settings/oauth
 
 **Required scopes for read-only audit:**
-- `all:read` (simplest), or individually:
-- `policy_file:read` - ACL policy
-- `devices:core:read` - Device list
-- `dns:read` - DNS configuration
-- `auth_keys:read` - Auth keys (for AUTH checks)
+
+`all:read` covers everything. Granting scopes individually:
+
+| Scope | Used for |
+|-------|----------|
+| `policy_file:read` | Tailnet policy file — ACL-*, NET-*, SSH-* |
+| `devices:core:read` | Device list — DEV-*, NET-* |
+| `dns:read` | DNS configuration — DNS-001, DEV-007 |
+| `auth_keys:read` | Machine auth keys — AUTH-* |
+| `feature_settings:read` | Tailnet settings — DEV-008, DEV-009, DEV-014 |
+| `logs:network:read` | Network flow logging setting — LOG-001 |
+| `networking_settings:read` | HTTPS certificate setting — NET-004 |
+| `log_streaming:read` | Log stream destinations — LOG-002 |
+| `webhooks:read` | Webhook endpoints — LOG-005, LOG-012 |
+| `oauth_keys:read` | OAuth clients — LOG-006 |
+| `users:read` | User roles and status — USER-001, LOG-006 |
+| `account_settings:read` | Security contact — LOG-011 |
+| `devices:posture_attributes:read` | Posture integrations — DEV-014 |
+
+Any scope you leave out only affects the checks that need it: those
+checks report that they could not read the setting rather than passing.
 
 **Additional scopes for fix mode:**
 - `devices:core` - Delete devices, modify tags (requires tag selection)
 - `auth_keys` - Delete auth keys
+
+### Tailnet Lock
+
+DEV-010 and DEV-012 report on Tailnet Lock, which the Tailscale API does not
+expose as a tailnet setting. Devices locked out by it are visible through the
+API, but determining whether lock is enabled needs the local `tailscale` CLI,
+which reads the daemon on the machine running tailsnitch. When auditing another
+tailnet with `--tailnet`, treat that part of the result accordingly. Use
+`--tailscale-path` if the binary is in a non-standard location.
 
 ### Option 2: API Key
 
@@ -250,13 +275,14 @@ tailsnitch --json | jq -r '
 | `--no-audit-log` | Disable audit logging of fix actions |
 | `--soc2` | Export SOC 2 evidence: `json` or `csv` |
 | `--tailscale-path` | Path to tailscale CLI (for Tailnet Lock checks) |
+| `--timeout` | Overall time budget for the audit (default `2m`) |
 | `--ignore-file` | Path to ignore file |
 | `--no-ignore` | Disable ignore file processing |
 | `--version` | Show version information |
 
 ## Security Checks
 
-Tailsnitch performs 52 security checks across 7 categories. See [docs/CHECKS.md](docs/CHECKS.md) for detailed documentation of each check.
+Tailsnitch performs 54 security checks across 7 categories. See [docs/CHECKS.md](docs/CHECKS.md) for detailed documentation of each check.
 
 ### Critical Severity
 
