@@ -8,9 +8,30 @@ import (
 	"testing"
 	"time"
 
+	tsapi "tailscale.com/client/tailscale/v2"
+
 	"github.com/Adversis/tailsnitch/pkg/client"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
+
+// tsTime builds the optional timestamp the API uses for lastSeen. An empty or
+// unparseable value yields nil, matching a device connected to control.
+func tsTime(s string) *tsapi.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil
+	}
+	return &tsapi.Time{Time: t}
+}
+
+// tsTimeVal builds a required API timestamp, such as a device key expiry.
+func tsTimeVal(s string) tsapi.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return tsapi.Time{Time: t}
+}
 
 func TestCheckTaggedDevicesKeyExpiry(t *testing.T) {
 	d := &DeviceAuditor{}
@@ -29,21 +50,21 @@ func TestCheckTaggedDevicesKeyExpiry(t *testing.T) {
 		{
 			name: "tagged device with expiry enabled - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Tags: []string{"tag:server"}, KeyExpiryDisabled: false},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Tags: []string{"tag:server"}, KeyExpiryDisabled: false}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "untagged device with expiry disabled - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "laptop1", Tags: nil, KeyExpiryDisabled: true},
+				{Device: tsapi.Device{ID: "1", Name: "laptop1", Tags: nil, KeyExpiryDisabled: true}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "tagged device with expiry disabled - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Hostname: "server1.local", Tags: []string{"tag:server"}, KeyExpiryDisabled: true},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Hostname: "server1.local", Tags: []string{"tag:server"}, KeyExpiryDisabled: true}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -51,9 +72,9 @@ func TestCheckTaggedDevicesKeyExpiry(t *testing.T) {
 		{
 			name: "multiple tagged devices with expiry disabled",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Tags: []string{"tag:server"}, KeyExpiryDisabled: true},
-				{DeviceID: "2", Name: "server2", Tags: []string{"tag:db"}, KeyExpiryDisabled: true},
-				{DeviceID: "3", Name: "server3", Tags: []string{"tag:web"}, KeyExpiryDisabled: false},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Tags: []string{"tag:server"}, KeyExpiryDisabled: true}},
+				{Device: tsapi.Device{ID: "2", Name: "server2", Tags: []string{"tag:db"}, KeyExpiryDisabled: true}},
+				{Device: tsapi.Device{ID: "3", Name: "server3", Tags: []string{"tag:web"}, KeyExpiryDisabled: false}},
 			},
 			wantPass:  false,
 			wantCount: 2,
@@ -100,14 +121,14 @@ func TestCheckUserDevicesWithTags(t *testing.T) {
 		{
 			name: "server with tags - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Hostname: "server1", OS: "linux", Tags: []string{"tag:server"}},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Hostname: "server1", OS: "linux", Tags: []string{"tag:server"}}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "macbook with tags - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "alice-macbook", Hostname: "alice-macbook-pro", OS: "macOS", Tags: []string{"tag:dev"}},
+				{Device: tsapi.Device{ID: "1", Name: "alice-macbook", Hostname: "alice-macbook-pro", OS: "macOS", Tags: []string{"tag:dev"}}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -115,7 +136,7 @@ func TestCheckUserDevicesWithTags(t *testing.T) {
 		{
 			name: "iphone with tags - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "alice-iphone", Hostname: "alice-iphone", OS: "iOS", Tags: []string{"tag:mobile"}},
+				{Device: tsapi.Device{ID: "1", Name: "alice-iphone", Hostname: "alice-iphone", OS: "iOS", Tags: []string{"tag:mobile"}}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -123,7 +144,7 @@ func TestCheckUserDevicesWithTags(t *testing.T) {
 		{
 			name: "windows laptop with tags - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "bob-laptop", Hostname: "bob-laptop", OS: "windows", Tags: []string{"tag:dev"}},
+				{Device: tsapi.Device{ID: "1", Name: "bob-laptop", Hostname: "bob-laptop", OS: "windows", Tags: []string{"tag:dev"}}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -131,7 +152,7 @@ func TestCheckUserDevicesWithTags(t *testing.T) {
 		{
 			name: "android device with tags - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "pixel", Hostname: "pixel-7", OS: "android", Tags: []string{"tag:mobile"}},
+				{Device: tsapi.Device{ID: "1", Name: "pixel", Hostname: "pixel-7", OS: "android", Tags: []string{"tag:mobile"}}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -139,7 +160,7 @@ func TestCheckUserDevicesWithTags(t *testing.T) {
 		{
 			name: "user device without tags - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "alice-macbook", Hostname: "alice-macbook-pro", OS: "macOS", Tags: nil},
+				{Device: tsapi.Device{ID: "1", Name: "alice-macbook", Hostname: "alice-macbook-pro", OS: "macOS", Tags: nil}},
 			},
 			wantPass: true,
 		},
@@ -187,14 +208,14 @@ func TestCheckStaleDevices(t *testing.T) {
 		{
 			name: "recently seen device - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Hostname: "server1", LastSeen: tenDaysAgo},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Hostname: "server1", LastSeen: tsTime(tenDaysAgo)}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "stale device - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "old-server", Hostname: "old-server", LastSeen: sixtyOneDaysAgo},
+				{Device: tsapi.Device{ID: "1", Name: "old-server", Hostname: "old-server", LastSeen: tsTime(sixtyOneDaysAgo)}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -202,7 +223,7 @@ func TestCheckStaleDevices(t *testing.T) {
 		{
 			name: "device with empty LastSeen - skip",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Hostname: "server1", LastSeen: ""},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Hostname: "server1", LastSeen: tsTime("")}},
 			},
 			wantPass: true,
 		},
@@ -248,16 +269,16 @@ func TestCheckUnauthorizedDevices(t *testing.T) {
 		{
 			name: "all authorized - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Authorized: true},
-				{DeviceID: "2", Name: "server2", Authorized: true},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Authorized: true}},
+				{Device: tsapi.Device{ID: "2", Name: "server2", Authorized: true}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "one unauthorized - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", Authorized: true},
-				{DeviceID: "2", Name: "pending", Hostname: "pending", User: "alice@example.com", Authorized: false},
+				{Device: tsapi.Device{ID: "1", Name: "server1", Authorized: true}},
+				{Device: tsapi.Device{ID: "2", Name: "pending", Hostname: "pending", User: "alice@example.com", Authorized: false}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -296,14 +317,14 @@ func TestCheckExternalDevices(t *testing.T) {
 		{
 			name: "no external devices - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server1", IsExternal: false},
+				{Device: tsapi.Device{ID: "1", Name: "server1", IsExternal: false}},
 			},
 			wantPass: true,
 		},
 		{
 			name: "external device - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "external-server", Hostname: "ext", User: "external@other.com", IsExternal: true},
+				{Device: tsapi.Device{ID: "1", Name: "external-server", Hostname: "ext", User: "external@other.com", IsExternal: true}},
 			},
 			wantPass:  false,
 			wantCount: 1,
@@ -342,13 +363,13 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 	}{
 		{
 			name:      "MagicDNS disabled - always pass (check skipped)",
-			devices:   []*client.Device{{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"}},
+			devices:   []*client.Device{{Device: tsapi.Device{ID: "1", Name: "server-password-backup", Hostname: "backup"}}},
 			dnsConfig: magicDNSDisabled,
 			wantPass:  true,
 		},
 		{
 			name:      "nil DNS config - always pass (check skipped)",
-			devices:   []*client.Device{{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"}},
+			devices:   []*client.Device{{Device: tsapi.Device{ID: "1", Name: "server-password-backup", Hostname: "backup"}}},
 			dnsConfig: nil,
 			wantPass:  true,
 		},
@@ -361,8 +382,8 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 		{
 			name: "normal names - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "web-server-1", Hostname: "web-1"},
-				{DeviceID: "2", Name: "api-gateway", Hostname: "api"},
+				{Device: tsapi.Device{ID: "1", Name: "web-server-1", Hostname: "web-1"}},
+				{Device: tsapi.Device{ID: "2", Name: "api-gateway", Hostname: "api"}},
 			},
 			dnsConfig: magicDNSEnabled,
 			wantPass:  true,
@@ -370,7 +391,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 		{
 			name: "name with password - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server-password-backup", Hostname: "backup"},
+				{Device: tsapi.Device{ID: "1", Name: "server-password-backup", Hostname: "backup"}},
 			},
 			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
@@ -379,7 +400,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 		{
 			name: "name with prod-db - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "prod-database-primary", Hostname: "db1"},
+				{Device: tsapi.Device{ID: "1", Name: "prod-database-primary", Hostname: "db1"}},
 			},
 			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
@@ -388,7 +409,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 		{
 			name: "name with IP address - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server-192.168.1.100", Hostname: "srv"},
+				{Device: tsapi.Device{ID: "1", Name: "server-192.168.1.100", Hostname: "srv"}},
 			},
 			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
@@ -397,7 +418,7 @@ func TestCheckSensitiveMachineNames(t *testing.T) {
 		{
 			name: "hostname with internal - fail",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "server", Hostname: "internal-api-server"},
+				{Device: tsapi.Device{ID: "1", Name: "server", Hostname: "internal-api-server"}},
 			},
 			dnsConfig: magicDNSEnabled,
 			wantPass:  false,
@@ -428,42 +449,42 @@ func TestIsDevDevice(t *testing.T) {
 	}{
 		{
 			name:   "tagged device - not dev device",
-			device: &client.Device{Name: "macbook", OS: "macOS", Tags: []string{"tag:server"}},
+			device: &client.Device{Device: tsapi.Device{Name: "macbook", OS: "macOS", Tags: []string{"tag:server"}}},
 			want:   false,
 		},
 		{
 			name:   "macOS device - dev device",
-			device: &client.Device{Name: "laptop", OS: "macOS"},
+			device: &client.Device{Device: tsapi.Device{Name: "laptop", OS: "macOS"}},
 			want:   true,
 		},
 		{
 			name:   "iOS device - dev device",
-			device: &client.Device{Name: "iphone", OS: "iOS"},
+			device: &client.Device{Device: tsapi.Device{Name: "iphone", OS: "iOS"}},
 			want:   true,
 		},
 		{
 			name:   "windows device - dev device",
-			device: &client.Device{Name: "desktop", OS: "windows"},
+			device: &client.Device{Device: tsapi.Device{Name: "desktop", OS: "windows"}},
 			want:   true,
 		},
 		{
 			name:   "android device - dev device",
-			device: &client.Device{Name: "pixel", OS: "android"},
+			device: &client.Device{Device: tsapi.Device{Name: "pixel", OS: "android"}},
 			want:   true,
 		},
 		{
 			name:   "linux server - not dev device",
-			device: &client.Device{Name: "server", OS: "linux", Hostname: "server1"},
+			device: &client.Device{Device: tsapi.Device{Name: "server", OS: "linux", Hostname: "server1"}},
 			want:   false,
 		},
 		{
 			name:   "macbook hostname pattern - dev device",
-			device: &client.Device{Name: "work", OS: "linux", Hostname: "alice-macbook-pro"},
+			device: &client.Device{Device: tsapi.Device{Name: "work", OS: "linux", Hostname: "alice-macbook-pro"}},
 			want:   true,
 		},
 		{
 			name:   "laptop hostname pattern - dev device",
-			device: &client.Device{Name: "work", OS: "linux", Hostname: "bob-laptop"},
+			device: &client.Device{Device: tsapi.Device{Name: "work", OS: "linux", Hostname: "bob-laptop"}},
 			want:   true,
 		},
 	}
@@ -494,9 +515,9 @@ func TestCheckUniqueUsers(t *testing.T) {
 		{
 			name: "few devices per user - pass",
 			devices: []*client.Device{
-				{DeviceID: "1", Name: "laptop", User: "alice@example.com"},
-				{DeviceID: "2", Name: "phone", User: "alice@example.com"},
-				{DeviceID: "3", Name: "laptop", User: "bob@example.com"},
+				{Device: tsapi.Device{ID: "1", Name: "laptop", User: "alice@example.com"}},
+				{Device: tsapi.Device{ID: "2", Name: "phone", User: "alice@example.com"}},
+				{Device: tsapi.Device{ID: "3", Name: "laptop", User: "bob@example.com"}},
 			},
 			wantPass: true,
 		},
@@ -505,11 +526,11 @@ func TestCheckUniqueUsers(t *testing.T) {
 			devices: func() []*client.Device {
 				var devices []*client.Device
 				for i := 0; i < 15; i++ {
-					devices = append(devices, &client.Device{
-						DeviceID: string(rune(i)),
-						Name:     "device",
-						User:     "alice@example.com",
-					})
+					devices = append(devices, &client.Device{Device: tsapi.Device{
+						ID:   string(rune(i)),
+						Name: "device",
+						User: "alice@example.com",
+					}})
 				}
 				return devices
 			}(),

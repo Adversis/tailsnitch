@@ -45,34 +45,13 @@ func (c *SOC2Collector) Collect(ctx context.Context) (*types.SOC2Report, error) 
 		return nil, fmt.Errorf("failed to get devices: %w", err)
 	}
 
-	// Fetch auth keys
+	// Fetch machine auth keys (excluding API tokens, OAuth clients and
+	// federated identities, which the same endpoint also returns).
 	var keys []keyInfo
-	keyIDs, err := c.client.GetKeys(ctx)
-	if err == nil {
-		for _, id := range keyIDs {
-			key, err := c.client.GetKey(ctx, id)
-			if err != nil {
-				continue
-			}
-			info := keyInfo{
-				ID:      key.ID,
-				Created: key.Created,
-				Expires: key.Expires,
-			}
-			if !key.Expires.IsZero() {
-				info.DaysToExpiry = int(time.Until(key.Expires).Hours() / 24)
-			}
-			if key.Capabilities.Devices.Create.Reusable {
-				info.Reusable = true
-			}
-			if key.Capabilities.Devices.Create.Preauthorized {
-				info.Preauthorized = true
-			}
-			if key.Capabilities.Devices.Create.Ephemeral {
-				info.Ephemeral = true
-			}
-			info.Tags = key.Capabilities.Devices.Create.Tags
-			keys = append(keys, info)
+	if apiKeys, err := c.client.GetAuthKeys(ctx); err == nil {
+		keys = make([]keyInfo, 0, len(apiKeys))
+		for _, key := range apiKeys {
+			keys = append(keys, newKeyInfo(key))
 		}
 	}
 
@@ -80,7 +59,7 @@ func (c *SOC2Collector) Collect(ctx context.Context) (*types.SOC2Report, error) 
 	var policy ACLPolicy
 	aclHuJSON, err := c.client.GetACLHuJSON(ctx)
 	if err == nil {
-		standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.ACL))
+		standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.HuJSON))
 		if err == nil {
 			json.Unmarshal(standardizedACL, &policy)
 		}
@@ -117,7 +96,7 @@ func (c *SOC2Collector) evaluateDevices(devices []*client.Device, now time.Time)
 	for _, dev := range devices {
 		resourceID := dev.NodeID
 		if resourceID == "" {
-			resourceID = dev.DeviceID
+			resourceID = dev.ID
 		}
 		resourceName := dev.Name
 		if resourceName == "" {
@@ -185,11 +164,12 @@ func (c *SOC2Collector) evaluateDevices(devices []*client.Device, now time.Time)
 		check = c.getCheck("DEV-004")
 		status = types.SOC2Pass
 		daysSinceSeen := 0
-		if lastSeenTime, err := time.Parse(time.RFC3339, dev.LastSeen); err == nil {
+		if lastSeenTime, ok := dev.LastSeenTime(); ok {
 			daysSinceSeen = int(now.Sub(lastSeenTime).Hours() / 24)
 			details = fmt.Sprintf("Last seen: %s (%d days ago)", lastSeenTime.Format("2006-01-02"), daysSinceSeen)
 		} else {
-			details = fmt.Sprintf("Last seen: %s", dev.LastSeen)
+			// The API omits lastSeen while a device is connected to control.
+			details = "Currently connected to control"
 		}
 		if daysSinceSeen > 90 {
 			status = types.SOC2Fail
@@ -278,15 +258,13 @@ func (c *SOC2Collector) evaluateDevices(devices []*client.Device, now time.Time)
 		if dev.KeyExpiryDisabled {
 			status = types.SOC2Fail
 			details = "Key expiry disabled"
-		} else if dev.Expires != "" {
-			if expiresTime, err := time.Parse(time.RFC3339, dev.Expires); err == nil {
-				daysToExpiry := int(expiresTime.Sub(now).Hours() / 24)
-				if daysToExpiry > 180 {
-					status = types.SOC2Fail
-					details = fmt.Sprintf("Key expires in %d days (>180)", daysToExpiry)
-				} else {
-					details = fmt.Sprintf("Key expires in %d days", daysToExpiry)
-				}
+		} else if !dev.Expires.IsZero() {
+			daysToExpiry := int(dev.Expires.Sub(now).Hours() / 24)
+			if daysToExpiry > 180 {
+				status = types.SOC2Fail
+				details = fmt.Sprintf("Key expires in %d days (>180)", daysToExpiry)
+			} else {
+				details = fmt.Sprintf("Key expires in %d days", daysToExpiry)
 			}
 		}
 		tests = append(tests, types.SOC2ControlTest{
@@ -395,7 +373,7 @@ func (c *SOC2Collector) evaluateKeys(keys []keyInfo, now time.Time) []types.SOC2
 }
 
 // evaluateACL tests ACL policy against ACL-* checks
-func (c *SOC2Collector) evaluateACL(policy ACLPolicy, aclHuJSON *client.ACLHuJSON, now time.Time) []types.SOC2ControlTest {
+func (c *SOC2Collector) evaluateACL(policy ACLPolicy, aclHuJSON *client.RawACL, now time.Time) []types.SOC2ControlTest {
 	var tests []types.SOC2ControlTest
 
 	// ACL-001: Allow all policy
@@ -404,7 +382,7 @@ func (c *SOC2Collector) evaluateACL(policy ACLPolicy, aclHuJSON *client.ACLHuJSO
 	details := "No allow-all rules found"
 	hasAllowAll := false
 	if aclHuJSON != nil {
-		rawACL := strings.ToLower(aclHuJSON.ACL)
+		rawACL := strings.ToLower(aclHuJSON.HuJSON)
 		if strings.Contains(rawACL, `"action": "accept"`) || strings.Contains(rawACL, `"action":"accept"`) {
 			for _, acl := range policy.ACLs {
 				if acl.Action == "accept" {
@@ -542,7 +520,7 @@ func (c *SOC2Collector) evaluateACL(policy ACLPolicy, aclHuJSON *client.ACLHuJSO
 	check = c.getCheck("ACL-007")
 	status = types.SOC2Pass
 	details = "No autogroup:danger-all usage"
-	if aclHuJSON != nil && strings.Contains(aclHuJSON.ACL, "autogroup:danger-all") {
+	if aclHuJSON != nil && strings.Contains(aclHuJSON.HuJSON, "autogroup:danger-all") {
 		status = types.SOC2Fail
 		details = "autogroup:danger-all grants access to everyone"
 	}
