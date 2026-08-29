@@ -100,6 +100,10 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		}
 	}
 
+	// Tailnet-wide state used by several auditors, fetched once so the
+	// parallel auditors below do not each re-request it.
+	tailnetCtx := FetchTailnetContext(ctx, a.client)
+
 	// Run all auditors in parallel using errgroup
 	var (
 		results []auditorResult
@@ -133,7 +137,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// Device auditor
 	g.Go(func() error {
 		auditor := NewDeviceAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, tailnetCtx)
 		appendResult(auditorResult{name: "Device", findings: findings, err: err})
 		return nil
 	})
@@ -141,7 +145,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// Network auditor (uses pre-fetched ACL policy)
 	g.Go(func() error {
 		auditor := NewNetworkAuditor(a.client)
-		findings, err := auditor.Audit(gctx, policy)
+		findings, err := auditor.Audit(gctx, policy, tailnetCtx)
 		appendResult(auditorResult{name: "Network", findings: findings, err: err})
 		return nil
 	})
@@ -157,7 +161,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// Logging auditor
 	g.Go(func() error {
 		auditor := NewLoggingAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, tailnetCtx)
 		appendResult(auditorResult{name: "Logging", findings: findings, err: err})
 		return nil
 	})

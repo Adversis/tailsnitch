@@ -197,9 +197,16 @@ func NewDeviceAuditor(c *client.Client) *DeviceAuditor {
 	return &DeviceAuditor{client: c}
 }
 
-// Audit performs device-related security checks
-func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// Audit performs device-related security checks.
+//
+// tc carries tailnet-wide state shared with the other auditors. When nil, it is
+// fetched here so an individual auditor can be run on its own.
+func (d *DeviceAuditor) Audit(ctx context.Context, tc *TailnetContext) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
+
+	if tc == nil {
+		tc = FetchTailnetContext(ctx, d.client)
+	}
 
 	devices, err := d.client.GetDevices(ctx)
 	if err != nil {
@@ -232,10 +239,10 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, d.checkSensitiveMachineNames(devices, dnsConfig))
 
 	// DEV-008: Long key expiry (default 180 days)
-	findings = append(findings, d.checkLongKeyExpiry(devices))
+	findings = append(findings, d.checkLongKeyExpiry(devices, tc))
 
 	// DEV-009: Device approval configuration
-	findings = append(findings, d.checkDeviceApproval(devices))
+	findings = append(findings, d.checkDeviceApproval(devices, tc))
 
 	// DEV-010: Tailnet Lock status
 	findings = append(findings, d.checkTailnetLock(ctx, devices))
@@ -248,6 +255,9 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 
 	// DEV-013: User devices with key expiry disabled
 	findings = append(findings, d.checkUserDevicesKeyExpiryDisabled(devices))
+
+	// DEV-015: Devices sharing a node key across machines
+	findings = append(findings, d.checkDuplicateNodeKeys(devices))
 
 	return findings, nil
 }
@@ -734,7 +744,7 @@ func isDevDevice(dev *client.Device) bool {
 	return false
 }
 
-func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Suggestion {
+func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-008",
 		Title:       "Devices with long key expiry periods",
@@ -750,6 +760,13 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 		devDeviceMaxDays = 90  // Dev devices should expire within
 		serverMaxDays    = 180 // Servers can have up to
 	)
+
+	// The tailnet-wide key duration is the ceiling every device inherits, so
+	// report it alongside the per-device findings.
+	var settingNote string
+	if settings := tc.settings(); settings != nil && settings.DevicesKeyDurationDays > 0 {
+		settingNote = fmt.Sprintf("Tailnet key expiry duration: %d days (devicesKeyDurationDays).", settings.DevicesKeyDurationDays)
+	}
 
 	var devDeviceLongExpiry []string
 	var serverLongExpiry []string
@@ -782,8 +799,11 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 	}
 
 	var allLongExpiry []string
+	if settingNote != "" {
+		allLongExpiry = append(allLongExpiry, settingNote, "")
+	}
 	if len(devDeviceLongExpiry) > 0 {
-		allLongExpiry = append(allLongExpiry, "Dev devices (should be longer :")
+		allLongExpiry = append(allLongExpiry, fmt.Sprintf("End-user devices expiring in more than %d days:", devDeviceMaxDays))
 		allLongExpiry = append(allLongExpiry, devDeviceLongExpiry...)
 	}
 	if len(serverLongExpiry) > 0 {
@@ -819,48 +839,130 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 	return finding
 }
 
-func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device) types.Suggestion {
+func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-009",
 		Title:       "Device approval configuration",
 		Severity:    types.Medium,
 		Category:    types.DeviceSecurity,
-		Description: "Device approval requires admin review before new devices can access the tailnet. This is a key security control.",
-		Remediation: "Enable device approval in Device management console. Review and approve only trusted, workplace-managed devices.",
+		Description: "Device approval requires an admin to review each new device before it can reach the tailnet.",
+		Remediation: "Enable device approval in Device management. Approve only trusted, managed devices.",
 		Source:      "https://tailscale.com/kb/1099/device-authorization",
 		Pass:        true,
 	}
 
-	// Count unauthorized vs authorized devices to infer if device approval is enabled
-	authorized := 0
-	unauthorized := 0
+	fix := &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Enable device approval in Device management settings",
+		AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
+		DocURL:      "https://tailscale.com/kb/1099/device-authorization",
+	}
+
+	settings := tc.settings()
+	if settings == nil {
+		// Fall back to the shape of the device list. This is a weak signal:
+		// with approval disabled every device is authorized on join, so an
+		// all-authorized fleet is consistent with approval being off.
+		var unauthorized int
+		for _, dev := range devices {
+			if !dev.Authorized {
+				unauthorized++
+			}
+		}
+
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = "Could not read the device approval setting."
+		details := unavailable("tailnet settings (needs the feature_settings:read scope)", errOf(tc, func(tc *TailnetContext) error { return tc.SettingsErr }))
+		if unauthorized > 0 {
+			details = append(details, fmt.Sprintf("%d device(s) are pending authorization, which implies device approval is enabled.", unauthorized))
+		}
+		finding.Details = details
+		finding.Fix = fix
+		return finding
+	}
+
+	authorized, pending := 0, 0
 	for _, dev := range devices {
 		if dev.Authorized {
 			authorized++
 		} else {
-			unauthorized++
+			pending++
 		}
 	}
 
-	// If all devices are authorized and there are many devices, device approval might not be enabled
-	// This is a heuristic - we can't directly check the setting via API
-	if unauthorized == 0 && authorized > 5 {
+	if !settings.DevicesApprovalOn {
 		finding.Pass = false
-		finding.Severity = types.Informational
-		finding.Description = fmt.Sprintf("All %d devices are authorized. Verify device approval is enabled in admin console - if not, new devices join automatically without review.", authorized)
-		finding.Details = "MANUAL CHECK REQUIRED: Verify device approval is enabled in Device management settings."
-		finding.Fix = &types.FixInfo{
-			Type:        types.FixTypeManual,
-			Description: "Enable device approval in Device management settings",
-			AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
-			DocURL:      "https://tailscale.com/kb/1099/device-authorization",
-		}
-	} else if unauthorized > 0 {
-		// Device approval is working - there are pending devices
-		finding.Pass = true
-		finding.Description = fmt.Sprintf("Device approval appears active: %d authorized, %d pending approval.", authorized, unauthorized)
+		finding.Description = fmt.Sprintf("Device approval is disabled. Any device with a valid credential joins %d existing device(s) without review.", authorized)
+		finding.Details = "Confirmed via the Tailscale API (devicesApprovalOn is false)."
+		finding.Fix = fix
+		return finding
 	}
 
+	finding.Description = fmt.Sprintf("Device approval is enabled: %d authorized device(s), %d pending approval.", authorized, pending)
+	finding.Details = "Confirmed via the Tailscale API (devicesApprovalOn is true)."
+	if pending > 0 {
+		// The pending devices themselves are enumerated by DEV-005.
+		finding.Details = fmt.Sprintf("Confirmed via the Tailscale API. %d device(s) await approval; see DEV-005.", pending)
+	}
+	return finding
+}
+
+// errOf reads an error field from a possibly-nil TailnetContext.
+func errOf(tc *TailnetContext, get func(*TailnetContext) error) error {
+	if tc == nil {
+		return errors.New("tailnet context was not fetched")
+	}
+	return get(tc)
+}
+
+// checkDuplicateNodeKeys reports devices the API says are connected more than
+// once with the same node key.
+func (d *DeviceAuditor) checkDuplicateNodeKeys(devices []*client.Device) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "DEV-015",
+		Title:       "Node key used by multiple connections",
+		Severity:    types.High,
+		Category:    types.DeviceSecurity,
+		Description: "Tailscale reports when several machines are connected using one device's node key, which usually means node state was copied off the original machine.",
+		Remediation: "Investigate the device. If the state was copied without authorization, remove the device, rotate any credentials it held, and re-enroll the legitimate machine.",
+		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Pass:        true,
+	}
+
+	var shared []string
+	var fixableItems []types.FixableItem
+	for _, dev := range devices {
+		if !dev.MultipleConnections {
+			continue
+		}
+		shared = append(shared, fmt.Sprintf("%s (%s) - user: %s", dev.Name, dev.Hostname, dev.User))
+		fixableItems = append(fixableItems, types.FixableItem{
+			ID:          dev.ID,
+			Name:        dev.Name,
+			Description: fmt.Sprintf("%s - node key in use by more than one connection", dev.Hostname),
+		})
+	}
+
+	if len(shared) == 0 {
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Details = append([]string{
+		"The API only reports this while the concurrent connections are live, so an",
+		"attacker who avoids overlapping with the legitimate node will not show up here.",
+		"",
+	}, shared...)
+	finding.Description = fmt.Sprintf("Found %d device(s) whose node key is in use by more than one connection.", len(shared))
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeAPI,
+		Description: "Remove the affected devices after confirming which machine is legitimate",
+		AdminURL:    "https://login.tailscale.com/admin/machines",
+		DocURL:      "https://tailscale.com/kb/1196/security-hardening",
+		Items:       fixableItems,
+		AutoFixSafe: false, // Removing the wrong machine drops legitimate access.
+	}
 	return finding
 }
 

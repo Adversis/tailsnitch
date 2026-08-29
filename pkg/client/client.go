@@ -280,19 +280,50 @@ type DNSConfig struct {
 
 // Type aliases so callers do not need to import the API client directly.
 type (
-	Key                = tsapi.Key
-	KeyCapabilities    = tsapi.KeyCapabilities
-	CreateKeyRequest   = tsapi.CreateKeyRequest
-	RawACL             = tsapi.RawACL
-	ACL                = tsapi.ACL
-	TailnetSettings    = tsapi.TailnetSettings
-	User               = tsapi.User
-	UserRole           = tsapi.UserRole
-	Webhook            = tsapi.Webhook
-	Contacts           = tsapi.Contacts
-	PostureIntegration = tsapi.PostureIntegration
-	DeviceRoutes       = tsapi.DeviceRoutes
-	LogType            = tsapi.LogType
+	Key                     = tsapi.Key
+	KeyCapabilities         = tsapi.KeyCapabilities
+	CreateKeyRequest        = tsapi.CreateKeyRequest
+	RawACL                  = tsapi.RawACL
+	ACL                     = tsapi.ACL
+	TailnetSettings         = tsapi.TailnetSettings
+	User                    = tsapi.User
+	UserRole                = tsapi.UserRole
+	UserStatus              = tsapi.UserStatus
+	UserType                = tsapi.UserType
+	Webhook                 = tsapi.Webhook
+	WebhookSubscriptionType = tsapi.WebhookSubscriptionType
+	Contacts                = tsapi.Contacts
+	PostureIntegration      = tsapi.PostureIntegration
+	DeviceRoutes            = tsapi.DeviceRoutes
+	LogType                 = tsapi.LogType
+)
+
+// User statuses and roles reported by the users endpoint.
+const (
+	UserStatusSuspended     = tsapi.UserStatusSuspended
+	UserStatusActive        = tsapi.UserStatusActive
+	UserStatusNeedsApproval = tsapi.UserStatusNeedsApproval
+
+	UserTypeShared = tsapi.UserTypeShared
+
+	UserRoleOwner        = tsapi.UserRoleOwner
+	UserRoleAdmin        = tsapi.UserRoleAdmin
+	UserRoleITAdmin      = tsapi.UserRoleITAdmin
+	UserRoleNetworkAdmin = tsapi.UserRoleNetworkAdmin
+)
+
+// Webhook subscription types this tool treats as security-critical.
+const (
+	WebhookCategoryTailnetManagement = tsapi.WebhookCategoryTailnetManagement
+	WebhookNodeCreated               = tsapi.WebhookNodeCreated
+	WebhookNodeDeleted               = tsapi.WebhookNodeDeleted
+	WebhookNodeApproved              = tsapi.WebhookNodeApproved
+	WebhookNodeNeedsApproval         = tsapi.WebhookNodeNeedsApproval
+	WebhookPolicyUpdate              = tsapi.WebhookPolicyUpdate
+	WebhookUserCreated               = tsapi.WebhookUserCreated
+	WebhookUserDeleted               = tsapi.WebhookUserDeleted
+	WebhookUserSuspended             = tsapi.WebhookUserSuspended
+	WebhookUserRoleUpdated           = tsapi.WebhookUserRoleUpdated
 )
 
 // Log types for logstream configuration lookups.

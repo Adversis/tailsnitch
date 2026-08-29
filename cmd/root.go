@@ -39,6 +39,7 @@ var (
 	tailscalePath string
 	ignoreFile    string
 	noIgnore      bool
+	timeout       time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -73,6 +74,7 @@ func init() {
 	rootCmd.Flags().StringVar(&tailscalePath, "tailscale-path", "", "Path to tailscale CLI binary (for Tailnet Lock checks)")
 	rootCmd.Flags().StringVar(&ignoreFile, "ignore-file", "", "Path to ignore file (default: .tailsnitch-ignore)")
 	rootCmd.Flags().BoolVar(&noIgnore, "no-ignore", false, "Disable ignore file processing")
+	rootCmd.Flags().DurationVar(&timeout, "timeout", 2*time.Minute, "Overall time budget for the audit")
 }
 
 func Execute() error {
@@ -86,7 +88,12 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// The audit makes a few dozen API calls, rate limited client-side, so the
+	// budget has to cover a large tailnet rather than a demo one.
+	if timeout <= 0 {
+		return fmt.Errorf("--timeout must be positive")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Parse and validate --checks flag

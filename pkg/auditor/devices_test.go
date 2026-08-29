@@ -1089,3 +1089,68 @@ func TestCheckTailnetLockPendingReportsAPILockouts(t *testing.T) {
 		t.Errorf("checkTailnetLockPending() details = %q, want it to name the locked-out device", details[0])
 	}
 }
+
+func TestCheckDeviceApprovalUsesTailnetSetting(t *testing.T) {
+	// This check used to guess from the device list: "all authorized and more
+	// than five devices" was read as approval probably being off. The setting
+	// is now read directly.
+	d := &DeviceAuditor{}
+	devices := []*client.Device{
+		{Device: tsapi.Device{Name: "a", Authorized: true}},
+		{Device: tsapi.Device{Name: "b", Authorized: true}},
+	}
+
+	on := d.checkDeviceApproval(devices, &TailnetContext{Settings: &client.TailnetSettings{DevicesApprovalOn: true}})
+	if !on.Pass {
+		t.Errorf("checkDeviceApproval() Pass = false, want true when devicesApprovalOn is set: %s", on.Description)
+	}
+
+	off := d.checkDeviceApproval(devices, &TailnetContext{Settings: &client.TailnetSettings{DevicesApprovalOn: false}})
+	if off.Pass {
+		t.Error("checkDeviceApproval() Pass = true, want false when devicesApprovalOn is clear")
+	}
+	if off.Severity != types.Medium {
+		t.Errorf("checkDeviceApproval() severity = %s, want MEDIUM when approval is off", off.Severity)
+	}
+}
+
+func TestCheckDeviceApprovalWithoutSettings(t *testing.T) {
+	d := &DeviceAuditor{}
+	devices := []*client.Device{{Device: tsapi.Device{Name: "a", Authorized: true}}}
+
+	got := d.checkDeviceApproval(devices, &TailnetContext{SettingsErr: client.ErrPermission})
+	if got.Pass {
+		t.Error("checkDeviceApproval() Pass = true, want false when the setting could not be read")
+	}
+	if got.Severity != types.Informational {
+		t.Errorf("checkDeviceApproval() severity = %s, want INFO when the setting is unknown", got.Severity)
+	}
+}
+
+func TestCheckDuplicateNodeKeys(t *testing.T) {
+	d := &DeviceAuditor{}
+
+	clean := d.checkDuplicateNodeKeys([]*client.Device{
+		{Device: tsapi.Device{Name: "a"}},
+	})
+	if !clean.Pass {
+		t.Error("checkDuplicateNodeKeys() Pass = false, want true with no shared node keys")
+	}
+
+	got := d.checkDuplicateNodeKeys([]*client.Device{
+		{Device: tsapi.Device{Name: "a"}},
+		{Device: tsapi.Device{ID: "2", Name: "copied", Hostname: "copied.local", User: "alice@example.com"}, MultipleConnections: true},
+	})
+	if got.Pass {
+		t.Error("checkDuplicateNodeKeys() Pass = true, want false when a node key has multiple connections")
+	}
+	if got.Severity != types.High {
+		t.Errorf("checkDuplicateNodeKeys() severity = %s, want HIGH", got.Severity)
+	}
+	if got.Fix == nil || len(got.Fix.Items) != 1 || got.Fix.Items[0].ID != "2" {
+		t.Errorf("checkDuplicateNodeKeys() fix items = %#v, want the affected device", got.Fix)
+	}
+	if got.Fix.AutoFixSafe {
+		t.Error("checkDuplicateNodeKeys() marked removal as auto-fix safe; removing the wrong machine drops legitimate access")
+	}
+}
