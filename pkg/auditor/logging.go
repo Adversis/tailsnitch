@@ -60,7 +60,7 @@ func (l *LoggingAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) 
 	// USER-001: User roles and ownership review
 	findings = append(findings, l.checkUserRoles())
 
-	// DEV-013: Device posture configuration
+	// DEV-014: Device posture configuration
 	findings = append(findings, l.checkDevicePosture())
 
 	return findings, nil
@@ -332,7 +332,7 @@ func (l *LoggingAuditor) checkUserRoles() types.Suggestion {
 
 func (l *LoggingAuditor) checkDevicePosture() types.Suggestion {
 	return types.Suggestion{
-		ID:          "DEV-013",
+		ID:          "DEV-014",
 		Title:       "Device posture configuration",
 		Severity:    types.Informational,
 		Category:    types.LoggingAdmin,

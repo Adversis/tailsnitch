@@ -80,6 +80,7 @@ func NewCheckRegistry() *CheckRegistry {
 		{ID: "DEV-011", Title: "Unique users in tailnet", Category: DeviceSecurity, CCMappings: []string{"CC6.1"}},
 		{ID: "DEV-012", Title: "Nodes awaiting Tailnet Lock signature", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC7.1"}},
 		{ID: "DEV-013", Title: "User devices with key expiry disabled", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC6.3"}},
+		{ID: "DEV-014", Title: "Device posture configuration", Category: LoggingAdmin, CCMappings: []string{"CC6.1", "CC7.1"}},
 
 		// Network checks - CC6.6 (Boundary Protection), CC6.7 (Transmission Protection)
 		{ID: "NET-001", Title: "Funnel exposes services to public internet", Category: NetworkExposure, CCMappings: []string{"CC6.6", "CC6.7"}},
@@ -113,6 +114,10 @@ func NewCheckRegistry() *CheckRegistry {
 
 		// DNS checks - CC6.6 (Boundary Protection)
 		{ID: "DNS-001", Title: "MagicDNS configuration", Category: DNSConfiguration, CCMappings: []string{"CC6.6"}},
+
+		// Diagnostics emitted when the audit itself could not evaluate a control.
+		{ID: "SYS-001", Title: "Could not retrieve ACL policy", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
+		{ID: "SYS-002", Title: "ACL policy parsing warning", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 	}
 
 	// Generate slugs and build lookup maps
