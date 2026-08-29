@@ -120,10 +120,10 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				desc += fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			reusableKeys = append(reusableKeys, fmt.Sprintf("Key %s (expires in %d days)", key.ID, key.DaysToExpiry))
+			reusableKeys = append(reusableKeys, fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry))
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
-				Name:        key.ID,
+				Name:        key.label(),
 				Description: desc,
 			})
 		}
@@ -161,10 +161,10 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	var fixableItems []types.FixableItem
 	for _, key := range keys {
 		if key.DaysToExpiry > 90 {
-			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("Key %s: %d days until expiry", key.ID, key.DaysToExpiry))
+			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry))
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
-				Name:        key.ID,
+				Name:        key.label(),
 				Description: fmt.Sprintf("Expires in %d days", key.DaysToExpiry),
 			})
 		}
@@ -205,7 +205,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				tagInfo = fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("Key %s (expires in %d days%s)", key.ID, key.DaysToExpiry, tagInfo))
+			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo))
 		}
 	}
 
@@ -224,7 +224,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 				}
 				fixableItems = append(fixableItems, types.FixableItem{
 					ID:          key.ID,
-					Name:        key.ID,
+					Name:        key.label(),
 					Description: desc,
 				})
 			}
@@ -257,7 +257,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 	var nonEphemeralReusable []string
 	for _, key := range keys {
 		if key.Reusable && !key.Ephemeral {
-			nonEphemeralReusable = append(nonEphemeralReusable, fmt.Sprintf("Key %s: reusable but not ephemeral", key.ID))
+			nonEphemeralReusable = append(nonEphemeralReusable, fmt.Sprintf("%s: reusable but not ephemeral", key.label()))
 		}
 	}
 
@@ -276,7 +276,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 				}
 				fixableItems = append(fixableItems, types.FixableItem{
 					ID:          key.ID,
-					Name:        key.ID,
+					Name:        key.label(),
 					Description: desc,
 				})
 			}
