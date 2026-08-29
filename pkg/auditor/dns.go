@@ -50,7 +50,7 @@ func (d *DNSAuditor) checkMagicDNS(config *client.DNSConfig) types.Suggestion {
 		Category:    types.DNSConfiguration,
 		Description: "MagicDNS enables automatic DNS resolution for tailnet devices using memorable names instead of IP addresses.",
 		Remediation: "Enable MagicDNS in DNS settings for easier device addressing. Use MagicDNS names instead of IP addresses.",
-		Source:      "https://tailscale.com/kb/1081/magicdns",
+		Source:      "https://tailscale.com/docs/features/magicdns",
 		Pass:        true,
 	}
 
@@ -61,7 +61,7 @@ func (d *DNSAuditor) checkMagicDNS(config *client.DNSConfig) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Enable MagicDNS in DNS settings",
 			AdminURL:    "https://login.tailscale.com/admin/dns",
-			DocURL:      "https://tailscale.com/kb/1081/magicdns",
+			DocURL:      "https://tailscale.com/docs/features/magicdns",
 		}
 	}
 

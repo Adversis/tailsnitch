@@ -94,7 +94,7 @@ func (l *LoggingAuditor) checkNetworkFlowLogs(tc *TailnetContext) types.Suggesti
 		Category:    types.LoggingAdmin,
 		Description: "Network flow logs record connections between devices. They are disabled by default and available on Premium and Enterprise plans.",
 		Remediation: "Enable network flow logs in the admin console. Add log streaming for retention beyond 30 days.",
-		Source:      "https://tailscale.com/kb/1219/network-flow-logs",
+		Source:      "https://tailscale.com/docs/features/logging/network-flow-logs",
 		Pass:        true,
 	}
 
@@ -107,7 +107,7 @@ func (l *LoggingAuditor) checkNetworkFlowLogs(tc *TailnetContext) types.Suggesti
 			Type:        types.FixTypeManual,
 			Description: "Check network flow logs in the admin console",
 			AdminURL:    "https://login.tailscale.com/admin/logs/network",
-			DocURL:      "https://tailscale.com/kb/1219/network-flow-logs",
+			DocURL:      "https://tailscale.com/docs/features/logging/network-flow-logs",
 		}
 		return finding
 	}
@@ -120,7 +120,7 @@ func (l *LoggingAuditor) checkNetworkFlowLogs(tc *TailnetContext) types.Suggesti
 			Type:        types.FixTypeManual,
 			Description: "Enable network flow logs in the admin console",
 			AdminURL:    "https://login.tailscale.com/admin/logs/network",
-			DocURL:      "https://tailscale.com/kb/1219/network-flow-logs",
+			DocURL:      "https://tailscale.com/docs/features/logging/network-flow-logs",
 		}
 		return finding
 	}
@@ -219,7 +219,7 @@ func (l *LoggingAuditor) checkWebhookConfiguration(tc *TailnetContext) types.Sug
 		Category:    types.LoggingAdmin,
 		Description: "Webhook endpoint secrets have no automatic expiration. If one leaks, anyone can send forged events to that endpoint until it is rotated.",
 		Remediation: "Rotate webhook secrets on a schedule and store them in a secrets manager.",
-		Source:      "https://tailscale.com/kb/1213/webhooks",
+		Source:      "https://tailscale.com/docs/features/webhooks",
 		Pass:        true,
 	}
 
@@ -235,7 +235,7 @@ func (l *LoggingAuditor) checkWebhookConfiguration(tc *TailnetContext) types.Sug
 			Type:        types.FixTypeManual,
 			Description: "Review webhook endpoints in the admin console",
 			AdminURL:    "https://login.tailscale.com/admin/settings/webhooks",
-			DocURL:      "https://tailscale.com/kb/1213/webhooks",
+			DocURL:      "https://tailscale.com/docs/features/webhooks",
 		}
 		return finding
 	}
@@ -279,7 +279,7 @@ func (l *LoggingAuditor) checkWebhookConfiguration(tc *TailnetContext) types.Sug
 		Type:        types.FixTypeManual,
 		Description: "Rotate webhook secrets in the admin console",
 		AdminURL:    "https://login.tailscale.com/admin/settings/webhooks",
-		DocURL:      "https://tailscale.com/kb/1213/webhooks",
+		DocURL:      "https://tailscale.com/docs/features/webhooks",
 	}
 	return finding
 }
@@ -291,7 +291,7 @@ func (l *LoggingAuditor) checkOAuthClients(tc *TailnetContext) types.Suggestion 
 		Category:    types.LoggingAdmin,
 		Description: "OAuth clients keep working after the user who created them loses tailnet access, leaving a standing credential behind a departed account.",
 		Remediation: "Review OAuth clients on the Trust credentials page and add OAuth client review to your offboarding checklist.",
-		Source:      "https://tailscale.com/kb/1215/oauth-clients",
+		Source:      "https://tailscale.com/docs/features/oauth-clients",
 		Pass:        true,
 	}
 
@@ -307,7 +307,7 @@ func (l *LoggingAuditor) checkOAuthClients(tc *TailnetContext) types.Suggestion 
 			Type:        types.FixTypeManual,
 			Description: "Review OAuth clients in the admin console",
 			AdminURL:    "https://login.tailscale.com/admin/settings/oauth",
-			DocURL:      "https://tailscale.com/kb/1215/oauth-clients",
+			DocURL:      "https://tailscale.com/docs/features/oauth-clients",
 		}
 		return finding
 	}
@@ -370,7 +370,7 @@ func (l *LoggingAuditor) checkOAuthClients(tc *TailnetContext) types.Suggestion 
 		Type:        types.FixTypeManual,
 		Description: "Review OAuth clients in the admin console",
 		AdminURL:    "https://login.tailscale.com/admin/settings/oauth",
-		DocURL:      "https://tailscale.com/kb/1215/oauth-clients",
+		DocURL:      "https://tailscale.com/docs/features/oauth-clients",
 	}
 	return finding
 }
@@ -390,14 +390,14 @@ func (l *LoggingAuditor) checkSCIMConfiguration() types.Suggestion {
 		Category:    types.LoggingAdmin,
 		Description: "SCIM API keys have no automatic expiration, increasing exposure window if compromised. SCIM-suspended users retain access until key expiry.",
 		Remediation: "Implement manual rotation schedule for SCIM keys. Manually remove suspended users if immediate revocation required.",
-		Source:      "https://tailscale.com/kb/1252/key-secret-management",
+		Source:      "https://tailscale.com/docs/reference/key-secret-management",
 		Pass:        false, // Manual check required
 		Details:     "MANUAL CHECK REQUIRED: If using SCIM, implement key rotation schedule and verify user suspension handling.",
 		Fix: &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Review and rotate SCIM keys in admin console",
 			AdminURL:    "https://login.tailscale.com/admin/settings/scim",
-			DocURL:      "https://tailscale.com/kb/1252/key-secret-management",
+			DocURL:      "https://tailscale.com/docs/reference/key-secret-management",
 		},
 	}
 }
@@ -410,14 +410,14 @@ func (l *LoggingAuditor) checkPasskeyAdmin() types.Suggestion {
 		Category:    types.LoggingAdmin,
 		Description: "If SSO identity provider fails, all users may be locked out without a passkey-authenticated admin account.",
 		Remediation: "Create a passkey-authenticated admin account with Owner or Admin role. Test passkey login periodically. Document recovery procedures.",
-		Source:      "https://tailscale.com/kb/1341/tailnet-passkey-admin",
+		Source:      "https://tailscale.com/docs/reference/tailnet-passkey-admin",
 		Pass:        false, // Manual check required
 		Details:     "MANUAL CHECK REQUIRED: Verify passkey-authenticated backup admin exists for IdP failure recovery.",
 		Fix: &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Configure passkey admin in user management",
 			AdminURL:    "https://login.tailscale.com/admin/settings/user-management",
-			DocURL:      "https://tailscale.com/kb/1341/tailnet-passkey-admin",
+			DocURL:      "https://tailscale.com/docs/reference/tailnet-passkey-admin",
 		},
 	}
 }
@@ -430,7 +430,7 @@ func (l *LoggingAuditor) checkMFAConfiguration() types.Suggestion {
 		Category:    types.LoggingAdmin,
 		Description: "Tailscale doesn't handle authentication directly - MFA must be configured in your identity provider. This is an FYI - Tailscale cannot detect or enforce this.",
 		Remediation: "Enable MFA in your identity provider. Use hardware security keys (FIDO2/WebAuthn) where possible for phishing resistance.",
-		Source:      "https://tailscale.com/kb/1075/multifactor-auth",
+		Source:      "https://tailscale.com/docs/multifactor-auth",
 		Pass:        true, // Informational - external system
 		Details:     "FYI: MFA must be configured in your IdP (Okta, Azure AD, Google, etc.), not in Tailscale.",
 	}
@@ -444,7 +444,7 @@ func (l *LoggingAuditor) checkDNSRebindingProtection() types.Suggestion {
 		Category:    types.LoggingAdmin,
 		Description: "HTTP services on the tailnet may be vulnerable to DNS rebinding attacks if they don't validate Host headers. This is an FYI - configure on your application servers.",
 		Remediation: "Configure all HTTP services to validate Host headers against an allowlist. Only accept requests with expected Host values.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true, // Informational - host-level configuration
 		Details:     "FYI: DNS rebinding protection must be configured on each HTTP service, not in Tailscale.",
 	}
@@ -458,7 +458,7 @@ func (l *LoggingAuditor) checkSecurityContact(tc *TailnetContext) types.Suggesti
 		Category:    types.LoggingAdmin,
 		Description: "The security contact is where Tailscale sends security notifications and bulletins for your tailnet.",
 		Remediation: "Set a security contact in Contact preferences. Prefer a group address (for example security@example.com) so coverage does not depend on one person.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true,
 	}
 
@@ -466,7 +466,7 @@ func (l *LoggingAuditor) checkSecurityContact(tc *TailnetContext) types.Suggesti
 		Type:        types.FixTypeManual,
 		Description: "Set the security contact in the admin console",
 		AdminURL:    "https://login.tailscale.com/admin/settings/general",
-		DocURL:      "https://tailscale.com/kb/1196/security-hardening",
+		DocURL:      "https://tailscale.com/docs/reference/best-practices/security",
 	}
 
 	if tc == nil || tc.ContactsErr != nil {
@@ -529,7 +529,7 @@ func (l *LoggingAuditor) checkWebhookEvents(tc *TailnetContext) types.Suggestion
 		Category:    types.LoggingAdmin,
 		Description: "Webhooks notify external systems about tailnet events such as device additions, policy changes and user role changes.",
 		Remediation: "Subscribe a webhook to the tailnet management events and route them to your SIEM or alerting system.",
-		Source:      "https://tailscale.com/kb/1213/webhooks",
+		Source:      "https://tailscale.com/docs/features/webhooks",
 		Pass:        true,
 	}
 
@@ -537,7 +537,7 @@ func (l *LoggingAuditor) checkWebhookEvents(tc *TailnetContext) types.Suggestion
 		Type:        types.FixTypeManual,
 		Description: "Configure webhook subscriptions in the admin console",
 		AdminURL:    "https://login.tailscale.com/admin/settings/webhooks",
-		DocURL:      "https://tailscale.com/kb/1213/webhooks",
+		DocURL:      "https://tailscale.com/docs/features/webhooks",
 	}
 
 	if tc == nil || tc.WebhooksErr != nil {
@@ -710,7 +710,7 @@ func (l *LoggingAuditor) checkDevicePosture(tc *TailnetContext) types.Suggestion
 		Category:    types.LoggingAdmin,
 		Description: "Device posture integrations (Intune, Jamf, CrowdStrike, Kolide) let policy restrict access based on device health and compliance.",
 		Remediation: "If your plan includes it, connect your MDM or EDR and reference posture attributes from the tailnet policy file to keep non-compliant devices out.",
-		Source:      "https://tailscale.com/kb/1288/device-posture",
+		Source:      "https://tailscale.com/docs/features/device-posture",
 		Pass:        true,
 	}
 
@@ -718,7 +718,7 @@ func (l *LoggingAuditor) checkDevicePosture(tc *TailnetContext) types.Suggestion
 		Type:        types.FixTypeManual,
 		Description: "Configure device posture integrations in the admin console",
 		AdminURL:    "https://login.tailscale.com/admin/settings/integrations",
-		DocURL:      "https://tailscale.com/kb/1288/device-posture",
+		DocURL:      "https://tailscale.com/docs/features/device-posture",
 	}
 
 	if tc == nil || tc.PostureErr != nil {

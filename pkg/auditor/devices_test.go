@@ -1154,3 +1154,43 @@ func TestCheckDuplicateNodeKeys(t *testing.T) {
 		t.Error("checkDuplicateNodeKeys() marked removal as auto-fix safe; removing the wrong machine drops legitimate access")
 	}
 }
+
+func TestGetLatestTailscaleVersionUsesStableTrack(t *testing.T) {
+	// Regression: this used the GitHub releases API, which is rate limited to
+	// 60 unauthenticated requests per hour and orders releases by publish date
+	// across maintenance branches, so a backported 1.98.x published after
+	// 1.102.x would be taken as the newest release.
+	if !strings.HasPrefix(stableTrackURL, "https://pkgs.tailscale.com/stable/") {
+		t.Errorf("stableTrackURL = %q, want Tailscale's own stable package index", stableTrackURL)
+	}
+	if strings.Contains(stableTrackURL, "github.com") {
+		t.Error("stableTrackURL still points at GitHub")
+	}
+}
+
+func TestParseVersionHandlesStableTrackFormat(t *testing.T) {
+	re := regexp.MustCompile(`v?(\d+)\.(\d+)`)
+
+	tests := []struct {
+		in           string
+		major, minor int
+		ok           bool
+	}{
+		{in: "1.102.3", major: 1, minor: 102, ok: true},
+		{in: "v1.102.3", major: 1, minor: 102, ok: true},
+		{in: "1.102.3-t01b2c3d4e", major: 1, minor: 102, ok: true},
+		{in: "", ok: false},
+		{in: "unknown", ok: false},
+	}
+
+	for _, tt := range tests {
+		major, minor, ok := parseVersion(tt.in, re)
+		if ok != tt.ok {
+			t.Errorf("parseVersion(%q) ok = %v, want %v", tt.in, ok, tt.ok)
+			continue
+		}
+		if ok && (major != tt.major || minor != tt.minor) {
+			t.Errorf("parseVersion(%q) = %d.%d, want %d.%d", tt.in, major, minor, tt.major, tt.minor)
+		}
+	}
+}

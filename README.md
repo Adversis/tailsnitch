@@ -323,7 +323,7 @@ Checks for logging configuration, DNS settings, user roles, and manual verificat
   Remediation:
   Define explicit ACL rules following least privilege principle.
 
-  Source: https://tailscale.com/kb/1192/acl-samples
+  Source: https://tailscale.com/docs/reference/examples/acls
 ----------------------------------------------------------------------
 
 === AUTHENTICATION & KEYS =============================================
@@ -339,7 +339,7 @@ Checks for logging configuration, DNS settings, user roles, and manual verificat
   Remediation:
   Store reusable keys in a secrets manager. Prefer one-off keys.
 
-  Source: https://tailscale.com/kb/1085/auth-keys
+  Source: https://tailscale.com/docs/features/access-control/auth-keys
 ----------------------------------------------------------------------
 
 SUMMARY
@@ -379,11 +379,11 @@ Run Tailsnitch in CI/CD pipelines to catch security regressions:
 
 ## References
 
-- [Tailscale Security Hardening Guide](https://tailscale.com/kb/1196/security-hardening)
-- [ACL Syntax Reference](https://tailscale.com/kb/1337/policy-syntax)
-- [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+- [Tailscale Security Hardening Guide](https://tailscale.com/docs/reference/best-practices/security)
+- [ACL Syntax Reference](https://tailscale.com/docs/reference/syntax/policy-file)
+- [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 - [Audit Logging](https://tailscale.com/kb/1203/audit-logging)
-- [Tailnet Lock](https://tailscale.com/kb/1226/tailnet-lock)
+- [Tailnet Lock](https://tailscale.com/docs/features/tailnet-lock)
 
 ## License
 

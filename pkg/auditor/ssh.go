@@ -46,7 +46,7 @@ func (s *SSHAuditor) checkSessionRecording(policy ACLPolicy) types.Suggestion {
 		Category:    types.SSHSecurity,
 		Description: "Session recording without enforceRecorder:true allows SSH sessions when recorders are unreachable.",
 		Remediation: "Set enforceRecorder:true for compliance-critical SSH rules. Deploy multiple recorders for failover.",
-		Source:      "https://tailscale.com/kb/1246/tailscale-ssh-session-recording",
+		Source:      "https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording",
 		Pass:        true,
 	}
 
@@ -86,7 +86,7 @@ func (s *SSHAuditor) checkSessionRecording(policy ACLPolicy) types.Suggestion {
    "users": ["autogroup:nonroot"], "recorder": ["tag:recorder"],
    "enforceRecorder": true}`,
 			AdminURL: "https://login.tailscale.com/admin/acls",
-			DocURL:   "https://tailscale.com/kb/1246/tailscale-ssh-session-recording",
+			DocURL:   "https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording",
 		}
 	} else if len(rulesWithRecording) == 0 && len(policy.SSH) > 0 {
 		finding.Pass = false
@@ -187,7 +187,7 @@ func (s *SSHAuditor) checkRootAccessSecurity(policy ACLPolicy) types.Suggestion 
 		Category:    types.SSHSecurity,
 		Description: "SSH check mode requires re-authentication through your IdP before connecting, adding an extra security layer for sensitive access.",
 		Remediation: "Use check mode (action: check or checkPeriod) for: root access, production servers, sensitive infrastructure, and rules with broad source access.",
-		Source:      "https://tailscale.com/kb/1193/tailscale-ssh",
+		Source:      "https://tailscale.com/docs/features/tailscale-ssh",
 		Pass:        true,
 	}
 
@@ -301,7 +301,7 @@ func (s *SSHAuditor) checkRootAccessSecurity(policy ACLPolicy) types.Suggestion 
 
   3. For maximum security, use "checkPeriod": "always" (note: may break automation)`,
 			AdminURL: "https://login.tailscale.com/admin/acls",
-			DocURL:   "https://tailscale.com/kb/1193/tailscale-ssh",
+			DocURL:   "https://tailscale.com/docs/features/tailscale-ssh",
 		}
 	}
 
@@ -316,7 +316,7 @@ func (s *SSHAuditor) checkRecorderUIExposure(policy ACLPolicy) types.Suggestion 
 		Category:    types.SSHSecurity,
 		Description: "If the recorder container web UI is enabled, it exposes recorded SSH sessions to anyone with network access.",
 		Remediation: "If using recorder --ui flag, verify ACL restricts port 443 access on recorder node to authorized users only.",
-		Source:      "https://tailscale.com/kb/1246/tailscale-ssh-session-recording",
+		Source:      "https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording",
 		Pass:        true,
 	}
 
@@ -339,7 +339,7 @@ func (s *SSHAuditor) checkRecorderUIExposure(policy ACLPolicy) types.Suggestion 
 			Type:        types.FixTypeManual,
 			Description: "Add ACL rules to restrict access to recorder UI (port 443)",
 			AdminURL:    "https://login.tailscale.com/admin/acls",
-			DocURL:      "https://tailscale.com/kb/1246/tailscale-ssh-session-recording",
+			DocURL:      "https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording",
 		}
 	}
 
@@ -354,7 +354,7 @@ func (s *SSHAuditor) checkSSHRulesExist(policy ACLPolicy) types.Suggestion {
 		Category:    types.SSHSecurity,
 		Description: "Tailscale SSH rules define who can SSH to which devices and as which users.",
 		Remediation: "Review SSH rules regularly. Use check mode for sensitive access. Implement session recording for compliance.",
-		Source:      "https://tailscale.com/kb/1193/tailscale-ssh",
+		Source:      "https://tailscale.com/docs/features/tailscale-ssh",
 		Pass:        true,
 	}
 
@@ -375,7 +375,7 @@ func (s *SSHAuditor) checkSSHRulesExist(policy ACLPolicy) types.Suggestion {
 		Type:        types.FixTypeManual,
 		Description: "Review and modify SSH rules in ACL policy",
 		AdminURL:    "https://login.tailscale.com/admin/acls",
-		DocURL:      "https://tailscale.com/kb/1193/tailscale-ssh",
+		DocURL:      "https://tailscale.com/docs/features/tailscale-ssh",
 	}
 
 	return finding

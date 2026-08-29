@@ -112,17 +112,23 @@ func findTailscaleBinary() (string, error) {
 	return absPath, nil
 }
 
-// getLatestTailscaleVersion fetches the latest stable version from GitHub releases API.
-// Per Tailscale docs, auto-updates take ~7 days to roll out, so we apply a grace period
-// and only consider releases older than 7 days as the "expected" version.
-// Returns the full version string (e.g., "v1.76.6") and parsed major/minor for comparison.
+// stableTrackURL is Tailscale's own package index for the stable release
+// track. It is preferred over the GitHub releases API, which is rate limited
+// to 60 unauthenticated requests per hour and lists releases in publish order
+// across maintenance branches, so a backported 1.98.x published after 1.102.x
+// would be read as the newest release.
+const stableTrackURL = "https://pkgs.tailscale.com/stable/?mode=json"
+
+// getLatestTailscaleVersion returns the current stable Tailscale version.
+//
+// Tailscale numbers stable releases with an even minor version and development
+// releases with an odd one, so a value from this feed is always a stable
+// version to compare client versions against.
 func getLatestTailscaleVersion(ctx context.Context) (versionStr string, major, minor int, ok bool) {
-	// Fetch recent releases (not just latest) so we can apply grace period
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/tailscale/tailscale/releases?per_page=10", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, stableTrackURL, nil)
 	if err != nil {
 		return "", 0, 0, false
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := httpClientWithTimeout.Do(req)
 	if err != nil {
@@ -134,39 +140,21 @@ func getLatestTailscaleVersion(ctx context.Context) (versionStr string, major, m
 		return "", 0, 0, false
 	}
 
-	var releases []struct {
-		TagName     string `json:"tag_name"`
-		PublishedAt string `json:"published_at"`
-		Prerelease  bool   `json:"prerelease"`
+	var track struct {
+		TarballsVersion string `json:"TarballsVersion"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&track); err != nil {
+		return "", 0, 0, false
+	}
+	if track.TarballsVersion == "" {
 		return "", 0, 0, false
 	}
 
-	versionRegex := regexp.MustCompile(`v?(\d+)\.(\d+)`)
-	gracePeriod := 7 * 24 * time.Hour
-
-	// Find the first non-prerelease that's older than the grace period
-	for _, release := range releases {
-		if release.Prerelease {
-			continue
-		}
-
-		publishedAt, err := time.Parse(time.RFC3339, release.PublishedAt)
-		if err != nil {
-			continue
-		}
-
-		// Check if release is older than grace period
-		if time.Since(publishedAt) >= gracePeriod {
-			major, minor, ok = parseVersion(release.TagName, versionRegex)
-			if ok {
-				return release.TagName, major, minor, true
-			}
-		}
+	major, minor, ok = parseVersion(track.TarballsVersion, regexp.MustCompile(`v?(\d+)\.(\d+)`))
+	if !ok {
+		return "", 0, 0, false
 	}
-
-	return "", 0, 0, false
+	return track.TarballsVersion, major, minor, true
 }
 
 // parseVersion extracts major and minor version numbers from a version string
@@ -270,7 +258,7 @@ func (d *DeviceAuditor) checkTaggedDevicesKeyExpiry(devices []*client.Device) ty
 		Category:    types.DeviceSecurity,
 		Description: "Tagged devices have key expiry disabled by default, creating indefinite access if credentials are compromised.",
 		Remediation: "Review key expiry settings for tagged devices in admin console. Enable expiry for sensitive infrastructure.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -289,7 +277,7 @@ func (d *DeviceAuditor) checkTaggedDevicesKeyExpiry(devices []*client.Device) ty
 			Type:        types.FixTypeManual,
 			Description: "Enable key expiry for tagged devices",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1068/tags",
+			DocURL:      "https://tailscale.com/docs/features/tags",
 		}
 	}
 
@@ -304,7 +292,7 @@ func (d *DeviceAuditor) checkUserDevicesWithTags(devices []*client.Device) types
 		Category:    types.DeviceSecurity,
 		Description: "Tags are intended for service accounts and servers, not user devices. Tagged user devices remain on network after user removal.",
 		Remediation: "Remove tags from end-user devices. Use tags only for servers and infrastructure. Check for orphaned devices from removed users.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -411,16 +399,18 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 		Category:    types.DeviceSecurity,
 		Description: "Outdated clients may have security vulnerabilities. Customers are responsible for client updates.",
 		Remediation: "Enable auto-updates in Device management. Use MDM to enforce updates. Monitor client versions.",
-		Source:      "https://tailscale.com/kb/1212/shared-responsibility",
+		Source:      "https://tailscale.com/docs/concepts/shared-responsibility",
 		Pass:        true,
 	}
 
 	versionRegex := regexp.MustCompile(`(\d+)\.(\d+)`)
 
-	// Try to get the stable version from GitHub releases (with 7-day grace period for auto-update rollout)
+	// Compare against the current stable release. If that lookup fails, fall
+	// back to the newest version present in the tailnet, which only finds
+	// devices that lag their own fleet: a uniformly outdated tailnet looks
+	// current by that measure, so the finding says which baseline was used.
 	latestVersionStr, latestMajor, latestMinor, gotLatest := getLatestTailscaleVersion(ctx)
 	if !gotLatest {
-		// Fallback: find the latest version among all devices
 		for _, dev := range devices {
 			if dev.ClientVersion == "" {
 				continue
@@ -434,7 +424,7 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 			}
 		}
 		if latestVersionStr != "" {
-			latestVersionStr = latestVersionStr + " (from tailnet)"
+			latestVersionStr += " (newest in this tailnet; the stable release feed was unreachable)"
 		}
 	}
 
@@ -455,7 +445,8 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 			continue
 		}
 
-		// Flag if more than 2 minor versions behind the expected version
+		// Stable minor versions step by two (1.98 -> 1.100 -> 1.102), so a gap
+		// of more than two means the device is at least two releases behind.
 		if major < latestMajor || (major == latestMajor && latestMinor-minor > 2) {
 			versionsBehind := latestMinor - minor
 			if major < latestMajor {
@@ -481,13 +472,13 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 	if len(outdatedDevices) > 0 {
 		finding.Pass = false
 		// Note: expected version accounts for 7-day auto-update rollout period
-		finding.Details = append([]string{fmt.Sprintf("Expected: %s (after 7-day auto-update rollout)", latestVersionStr)}, outdatedDevices...)
+		finding.Details = append([]string{fmt.Sprintf("Current stable release: %s", latestVersionStr)}, outdatedDevices...)
 		finding.Description = fmt.Sprintf("Found %d device(s) with outdated Tailscale clients.", len(outdatedDevices))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Enable auto-updates in Device management settings",
 			AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
-			DocURL:      "https://tailscale.com/kb/1212/shared-responsibility",
+			DocURL:      "https://tailscale.com/docs/concepts/shared-responsibility",
 		}
 	}
 
@@ -513,7 +504,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 		Category:    types.DeviceSecurity,
 		Description: "Devices not seen in over 60 days may be unused and should be reviewed for removal.",
 		Remediation: "Review and remove unused devices. Implement device lifecycle policies.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -574,7 +565,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 		Category:    types.DeviceSecurity,
 		Description: "Devices pending authorization cannot access the tailnet but may indicate attempted unauthorized access.",
 		Remediation: "Review and authorize legitimate devices. Investigate unknown device attempts.",
-		Source:      "https://tailscale.com/kb/1099/device-authorization",
+		Source:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 		Pass:        true,
 	}
 
@@ -606,7 +597,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 			Type:        types.FixTypeAPI,
 			Description: "Authorize pending devices via API",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1099/device-authorization",
+			DocURL:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 			Items:       fixableItems,
 			AutoFixSafe: false, // Requires review before authorizing
 		}
@@ -623,7 +614,7 @@ func (d *DeviceAuditor) checkExternalDevices(devices []*client.Device) types.Sug
 		Category:    types.DeviceSecurity,
 		Description: "External devices are shared from other tailnets. Ensure these are expected.",
 		Remediation: "Review external devices and verify they should have access. Remove any unexpected shared devices.",
-		Source:      "https://tailscale.com/kb/1084/sharing",
+		Source:      "https://tailscale.com/docs/features/sharing",
 		Pass:        true,
 	}
 
@@ -642,7 +633,7 @@ func (d *DeviceAuditor) checkExternalDevices(devices []*client.Device) types.Sug
 			Type:        types.FixTypeManual,
 			Description: "Review and manage external shared devices",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1084/sharing",
+			DocURL:      "https://tailscale.com/docs/features/sharing",
 		}
 	}
 
@@ -657,7 +648,7 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device, dns
 		Category:    types.DeviceSecurity,
 		Description: "Machine names are published to Certificate Transparency logs when HTTPS is enabled. Sensitive information in names is publicly exposed.",
 		Remediation: "Rename devices to remove sensitive information before enabling HTTPS. Use generic names. Consider randomized tailnet DNS name.",
-		Source:      "https://tailscale.com/kb/1153/enabling-https",
+		Source:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		Pass:        true,
 	}
 
@@ -699,7 +690,7 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device, dns
 			Type:        types.FixTypeManual,
 			Description: "Rename devices to remove sensitive information",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1153/enabling-https",
+			DocURL:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		}
 	}
 
@@ -752,7 +743,7 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device, tc *Tailnet
 		Category:    types.DeviceSecurity,
 		Description: "Default key expiry is 180 days. Dev devices (laptops, phones) should use shorter; servers can use up to 180 days.",
 		Remediation: "Customize node key expiry: shorter for dev devices, up to 180 days for servers. Shorter periods require more frequent re-authentication.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true,
 	}
 
@@ -832,7 +823,7 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device, tc *Tailnet
 			Type:        types.FixTypeManual,
 			Description: "Adjust key expiry periods: shorter for dev devices, longer for servers",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1196/security-hardening",
+			DocURL:      "https://tailscale.com/docs/reference/best-practices/security",
 		}
 	}
 
@@ -847,7 +838,7 @@ func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device, tc *Tailne
 		Category:    types.DeviceSecurity,
 		Description: "Device approval requires an admin to review each new device before it can reach the tailnet.",
 		Remediation: "Enable device approval in Device management. Approve only trusted, managed devices.",
-		Source:      "https://tailscale.com/kb/1099/device-authorization",
+		Source:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 		Pass:        true,
 	}
 
@@ -855,7 +846,7 @@ func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device, tc *Tailne
 		Type:        types.FixTypeManual,
 		Description: "Enable device approval in Device management settings",
 		AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
-		DocURL:      "https://tailscale.com/kb/1099/device-authorization",
+		DocURL:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 	}
 
 	settings := tc.settings()
@@ -926,7 +917,7 @@ func (d *DeviceAuditor) checkDuplicateNodeKeys(devices []*client.Device) types.S
 		Category:    types.DeviceSecurity,
 		Description: "Tailscale reports when several machines are connected using one device's node key, which usually means node state was copied off the original machine.",
 		Remediation: "Investigate the device. If the state was copied without authorization, remove the device, rotate any credentials it held, and re-enroll the legitimate machine.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true,
 	}
 
@@ -959,7 +950,7 @@ func (d *DeviceAuditor) checkDuplicateNodeKeys(devices []*client.Device) types.S
 		Type:        types.FixTypeAPI,
 		Description: "Remove the affected devices after confirming which machine is legitimate",
 		AdminURL:    "https://login.tailscale.com/admin/machines",
-		DocURL:      "https://tailscale.com/kb/1196/security-hardening",
+		DocURL:      "https://tailscale.com/docs/reference/best-practices/security",
 		Items:       fixableItems,
 		AutoFixSafe: false, // Removing the wrong machine drops legitimate access.
 	}
@@ -1041,7 +1032,7 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context, devices []*client.
 		Category:    types.DeviceSecurity,
 		Description: "Tailnet Lock (network lock) prevents attackers from adding devices even with stolen auth keys. Requires cryptographic signing from trusted nodes.",
 		Remediation: "Enable Tailnet Lock to require device signing. Run: tailscale lock init",
-		Source:      "https://tailscale.com/kb/1226/tailnet-lock",
+		Source:      "https://tailscale.com/docs/features/tailnet-lock",
 		Pass:        true,
 	}
 
@@ -1073,7 +1064,7 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context, devices []*client.
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
 			Description: "Install the tailscale CLI, then run 'tailscale lock status'",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+			DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 		}
 		return finding
 	}
@@ -1097,7 +1088,7 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context, devices []*client.
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
 			Description: "Enable Tailnet Lock by running 'tailscale lock init' on a trusted node",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+			DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 		}
 		return finding
 	}
@@ -1129,7 +1120,7 @@ func (d *DeviceAuditor) checkUniqueUsers(devices []*client.Device) types.Suggest
 		Category:    types.DeviceSecurity,
 		Description: "Summary of unique users who own devices in the tailnet. Review user list for unexpected or departed users.",
 		Remediation: "Periodically audit the user list. Remove access for departed employees. Verify external users should have access.",
-		Source:      "https://tailscale.com/kb/1184/deprovisioning",
+		Source:      "https://tailscale.com/docs/features/sharing/how-to/offboard",
 		Pass:        true,
 	}
 
@@ -1166,7 +1157,7 @@ func (d *DeviceAuditor) checkUniqueUsers(devices []*client.Device) types.Suggest
 			Type:        types.FixTypeManual,
 			Description: "Review users with many devices",
 			AdminURL:    "https://login.tailscale.com/admin/users",
-			DocURL:      "https://tailscale.com/kb/1184/deprovisioning",
+			DocURL:      "https://tailscale.com/docs/features/sharing/how-to/offboard",
 		}
 	}
 
@@ -1181,7 +1172,7 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context, devices []*
 		Category:    types.DeviceSecurity,
 		Description: "With Tailnet Lock enabled, new nodes require signatures from trusted signing keys before they can connect.",
 		Remediation: "Review pending nodes and sign legitimate ones. Investigate unexpected signing requests.",
-		Source:      "https://tailscale.com/kb/1226/tailnet-lock",
+		Source:      "https://tailscale.com/docs/features/tailnet-lock",
 		Pass:        true,
 	}
 
@@ -1239,7 +1230,7 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context, devices []*
 	finding.Fix = &types.FixInfo{
 		Type:        types.FixTypeExternal,
 		Description: "Review with 'tailscale lock status' and sign legitimate nodes: tailscale lock sign <nodekey>",
-		DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+		DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 	}
 	return finding
 }
@@ -1252,7 +1243,7 @@ func (d *DeviceAuditor) checkUserDevicesKeyExpiryDisabled(devices []*client.Devi
 		Category:    types.DeviceSecurity,
 		Description: "User devices with key expiry disabled never require re-authentication, which may be a compliance concern.",
 		Remediation: "Review devices with disabled key expiry. Re-enable expiry unless there's a specific operational need.",
-		Source:      "https://tailscale.com/kb/1028/key-expiry",
+		Source:      "https://tailscale.com/docs/features/access-control/key-expiry",
 		Pass:        true,
 	}
 
@@ -1282,7 +1273,7 @@ func (d *DeviceAuditor) checkUserDevicesKeyExpiryDisabled(devices []*client.Devi
 			Type:        types.FixTypeManual,
 			Description: "Review and re-enable key expiry for user devices in admin console",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1028/key-expiry",
+			DocURL:      "https://tailscale.com/docs/features/access-control/key-expiry",
 		}
 	}
 

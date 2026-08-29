@@ -103,6 +103,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 
 	// Parse the ACL - first standardize HuJSON (with comments) to JSON
 	var policy ACLPolicy
+	var fields policyFields
 	standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.HuJSON))
 	if err != nil {
 		findings = append(findings, types.Suggestion{
@@ -122,10 +123,12 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 			Description: fmt.Sprintf("Could not parse ACL JSON: %v. Some checks may be incomplete.", err),
 			Pass:        true,
 		})
+	} else {
+		fields = newPolicyFields(standardizedACL)
 	}
 
 	// ACL-001: Check for default "allow all" policy
-	findings = append(findings, a.checkAllowAll(policy, aclHuJSON.HuJSON))
+	findings = append(findings, a.checkAllowAll(policy, fields))
 
 	// ACL-002: Check for SSH autogroup:nonroot misconfiguration
 	findings = append(findings, a.checkSSHNonrootMisconfig(policy))
@@ -149,7 +152,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, a.checkGroupsExist(policy))
 
 	// ACL-009: Check grants usage (newer format)
-	findings = append(findings, a.checkGrantsUsage(policy, aclHuJSON.HuJSON))
+	findings = append(findings, a.checkGrantsUsage(policy, fields))
 
 	// ACL-010: Check Taildrop configuration
 	findings = append(findings, a.checkTaildropConfig(policy))
@@ -157,24 +160,59 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	return findings, nil
 }
 
-func (a *ACLAuditor) checkAllowAll(policy ACLPolicy, rawACL string) types.Suggestion {
+// policyFields records which top-level keys the tailnet policy file defines.
+//
+// Presence has to be read from the parsed document rather than by searching the
+// raw HuJSON: comments are part of that text, so a policy remarking that it has
+// "no \"acls\" section" would defeat a substring test for the key.
+type policyFields struct {
+	present map[string]bool
+	parsed  bool
+}
+
+func newPolicyFields(standardizedACL []byte) policyFields {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(standardizedACL, &raw); err != nil {
+		return policyFields{}
+	}
+
+	present := make(map[string]bool, len(raw))
+	for key := range raw {
+		present[key] = true
+	}
+	return policyFields{present: present, parsed: true}
+}
+
+// has reports whether the policy defines the given top-level key. It reports
+// false when the policy could not be parsed, so callers should check parsed
+// before drawing a conclusion from an absent key.
+func (f policyFields) has(key string) bool { return f.present[key] }
+
+func (a *ACLAuditor) checkAllowAll(policy ACLPolicy, fields policyFields) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "ACL-001",
 		Title:       "Default 'allow all' policy active (Access Rules)",
 		Severity:    types.Critical,
 		Category:    types.AccessControl,
 		Description: "Your ACL policy may contain overly permissive rules allowing all traffic between devices.",
-		Remediation: "Define explicit ACL rules following least privilege principle. Remove rules with src: [\"*\"] or dst: [\"*:*\"]. See https://tailscale.com/kb/1192/acl-samples for examples.",
-		Source:      "https://tailscale.com/kb/1192/acl-samples",
+		Remediation: "Define explicit ACL rules following least privilege principle. Remove rules with src: [\"*\"] or dst: [\"*:*\"]. See https://tailscale.com/docs/reference/examples/acls for examples.",
+		Source:      "https://tailscale.com/docs/reference/examples/acls",
 		Pass:        true,
 	}
 
-	// Check if "acls" or "grants" field is present in the raw ACL
-	// Omitting both fields entirely = default "allow all" (CRITICAL)
-	// Empty array {"acls": []} with no grants = "deny all" (nothing works, possibly intentional)
-	// Using grants = valid access control (don't flag as "denies all")
-	hasACLsField := strings.Contains(rawACL, `"acls"`)
-	hasGrantsField := strings.Contains(rawACL, `"grants"`)
+	// Omitting both "acls" and "grants" leaves Tailscale's default allow-all
+	// policy in force. An empty "acls" with no grants denies everything, which
+	// is secure but often unintentional. A policy using grants is neither.
+	if !fields.parsed {
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = "The tailnet policy file could not be parsed, so its access rules were not evaluated."
+		finding.Details = "See ACL-ERR for the parse error."
+		return finding
+	}
+
+	hasACLsField := fields.has("acls")
+	hasGrantsField := fields.has("grants")
 	hasGrants := len(policy.Grants) > 0
 
 	if !hasACLsField && !hasGrantsField {
@@ -185,7 +223,7 @@ func (a *ACLAuditor) checkAllowAll(policy ACLPolicy, rawACL string) types.Sugges
 			Type:        types.FixTypeManual,
 			Description: "Add an 'acls' or 'grants' section with explicit rules to restrict access",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:      "https://tailscale.com/kb/1192/acl-samples",
+			DocURL:      "https://tailscale.com/docs/reference/examples/acls",
 		}
 		return finding
 	}
@@ -202,7 +240,7 @@ func (a *ACLAuditor) checkAllowAll(policy ACLPolicy, rawACL string) types.Sugges
 			Type:        types.FixTypeManual,
 			Description: "Add ACL rules or grants to allow required traffic between devices",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:      "https://tailscale.com/kb/1192/acl-samples",
+			DocURL:      "https://tailscale.com/docs/reference/examples/acls",
 		}
 		return finding
 	}
@@ -270,7 +308,7 @@ func (a *ACLAuditor) checkAllowAll(policy ACLPolicy, rawACL string) types.Sugges
 With specific rules like:
   {"action": "accept", "src": ["group:employees"], "dst": ["tag:server:22,443"]}`,
 			AdminURL: "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:   "https://tailscale.com/kb/1192/acl-samples",
+			DocURL:   "https://tailscale.com/docs/reference/examples/acls",
 			Items:    fixableItems,
 		}
 	}
@@ -286,7 +324,7 @@ func (a *ACLAuditor) checkSSHNonrootMisconfig(policy ACLPolicy) types.Suggestion
 		Category:    types.AccessControl,
 		Description: "SSH rules with autogroup:nonroot users and tagged destinations allow anyone matching src to SSH as ANY non-root user.",
 		Remediation: "Replace autogroup:nonroot with explicit usernames when targeting tagged devices. Only use autogroup:nonroot with autogroup:self destinations.",
-		Source:      "https://tailscale.com/kb/1193/tailscale-ssh",
+		Source:      "https://tailscale.com/docs/features/tailscale-ssh",
 		Pass:        true,
 	}
 
@@ -322,7 +360,7 @@ func (a *ACLAuditor) checkSSHNonrootMisconfig(policy ACLPolicy) types.Suggestion
 			Type:        types.FixTypeManual,
 			Description: "Update SSH rules to use explicit usernames instead of autogroup:nonroot",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/ssh",
-			DocURL:      "https://tailscale.com/kb/1193/tailscale-ssh",
+			DocURL:      "https://tailscale.com/docs/features/tailscale-ssh",
 		}
 	}
 
@@ -337,7 +375,7 @@ func (a *ACLAuditor) checkACLTests(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "ACL tests help validate access controls and prevent accidental permission changes.",
 		Remediation: "Add a 'tests' section to your ACL policy with both 'accept' and 'deny' assertions. Tests are validated when policies update.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true,
 	}
 
@@ -352,7 +390,7 @@ func (a *ACLAuditor) checkACLTests(policy ACLPolicy) types.Suggestion {
     {"src": "user@example.com", "deny": ["prod-db:5432"]}
   ]`,
 			AdminURL: "https://login.tailscale.com/admin/acls/visual/tests",
-			DocURL:   "https://tailscale.com/kb/1196/security-hardening",
+			DocURL:   "https://tailscale.com/docs/reference/best-practices/security",
 		}
 		return finding
 	}
@@ -394,7 +432,7 @@ func (a *ACLAuditor) checkAutogroupMember(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "Using autogroup:member in ACLs also grants access to external invited users with shared devices.",
 		Remediation: "Review all rules using autogroup:member. List externally shared devices and verify external users should have that access.",
-		Source:      "https://tailscale.com/kb/1337/policy-syntax",
+		Source:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		Pass:        true,
 	}
 
@@ -416,7 +454,7 @@ func (a *ACLAuditor) checkAutogroupMember(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Review ACL rules using autogroup:member and consider using specific groups",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:      "https://tailscale.com/kb/1337/policy-syntax",
+			DocURL:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		}
 	}
 
@@ -431,7 +469,7 @@ func (a *ACLAuditor) checkAutoApprovers(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "AutoApprovers can automatically approve subnet routes and exit nodes without admin intervention.",
 		Remediation: "Review autoApprovers.routes and autoApprovers.exitNode. Use specific tags rather than broad groups. Ensure unauthorized users cannot auto-approve sensitive routes.",
-		Source:      "https://tailscale.com/kb/1337/policy-syntax",
+		Source:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		Pass:        true,
 	}
 
@@ -473,7 +511,7 @@ func (a *ACLAuditor) checkAutoApprovers(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Review autoApprovers configuration in ACL policy",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/auto-approvers",
-			DocURL:      "https://tailscale.com/kb/1337/policy-syntax",
+			DocURL:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		}
 		return finding
 	}
@@ -486,7 +524,7 @@ func (a *ACLAuditor) checkAutoApprovers(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Restrict autoApprovers to specific tags instead of broad groups",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/auto-approvers",
-			DocURL:      "https://tailscale.com/kb/1337/policy-syntax",
+			DocURL:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		}
 	}
 
@@ -501,7 +539,7 @@ func (a *ACLAuditor) checkTagOwners(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "tagOwners controls who can apply tags to devices. Overly permissive settings allow privilege escalation.",
 		Remediation: "Restrict tagOwners to autogroup:admin or specific security groups. Never use autogroup:member for production tags.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -526,7 +564,7 @@ func (a *ACLAuditor) checkTagOwners(policy ACLPolicy) types.Suggestion {
 With:
   "tagOwners": {"tag:prod": ["autogroup:admin"]}`,
 			AdminURL: "https://login.tailscale.com/admin/acls/visual/tag-owners",
-			DocURL:   "https://tailscale.com/kb/1068/tags",
+			DocURL:   "https://tailscale.com/docs/features/tags",
 		}
 	}
 
@@ -541,7 +579,7 @@ func (a *ACLAuditor) checkDangerAll(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "autogroup:danger-all matches ALL users and devices including external users, shared nodes, and tagged devices. This is the most permissive autogroup.",
 		Remediation: "Replace autogroup:danger-all with specific groups, tags, or autogroup:member. Only use danger-all if you truly need to grant access to external/shared users.",
-		Source:      "https://tailscale.com/kb/1337/policy-syntax",
+		Source:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		Pass:        true,
 	}
 
@@ -609,7 +647,7 @@ func (a *ACLAuditor) checkDangerAll(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Replace autogroup:danger-all with more restrictive groups or autogroup:member",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:      "https://tailscale.com/kb/1337/policy-syntax",
+			DocURL:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		}
 	}
 
@@ -624,7 +662,7 @@ func (a *ACLAuditor) checkGroupsExist(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "Groups allow logical organization of users for ACL rules, making policy management easier and less error-prone.",
 		Remediation: "Define groups in your ACL policy to organize users logically. Example: \"groups\": {\"group:engineers\": [\"user@example.com\"]}",
-		Source:      "https://tailscale.com/kb/1337/policy-syntax",
+		Source:      "https://tailscale.com/docs/reference/syntax/policy-file",
 		Pass:        true,
 	}
 
@@ -639,7 +677,7 @@ func (a *ACLAuditor) checkGroupsExist(policy ACLPolicy) types.Suggestion {
     "group:admins": ["admin@example.com"]
   }`,
 			AdminURL: "https://login.tailscale.com/admin/acls/visual/groups",
-			DocURL:   "https://tailscale.com/kb/1337/policy-syntax",
+			DocURL:   "https://tailscale.com/docs/reference/syntax/policy-file",
 		}
 	} else {
 		finding.Description = fmt.Sprintf("%d group(s) defined for logical user organization.", len(policy.Groups))
@@ -655,7 +693,7 @@ func (a *ACLAuditor) checkGroupsExist(policy ACLPolicy) types.Suggestion {
 	return finding
 }
 
-func (a *ACLAuditor) checkGrantsUsage(policy ACLPolicy, rawACL string) types.Suggestion {
+func (a *ACLAuditor) checkGrantsUsage(policy ACLPolicy, fields policyFields) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "ACL-009",
 		Title:       "Using legacy ACLs instead of grants (Access Rules)",
@@ -663,11 +701,11 @@ func (a *ACLAuditor) checkGrantsUsage(policy ACLPolicy, rawACL string) types.Sug
 		Category:    types.AccessControl,
 		Description: "Grants are a newer, more flexible format for access control that supports app-level permissions and better composability.",
 		Remediation: "Consider migrating from legacy ACLs to grants for new policies. Grants support additional capabilities like app connectors.",
-		Source:      "https://tailscale.com/kb/1324/grants",
+		Source:      "https://tailscale.com/docs/features/access-control/grants",
 		Pass:        true,
 	}
 
-	hasGrants := len(policy.Grants) > 0 || strings.Contains(rawACL, `"grants"`)
+	hasGrants := len(policy.Grants) > 0 || fields.has("grants")
 	hasLegacyACLs := len(policy.ACLs) > 0
 
 	if !hasGrants && hasLegacyACLs {
@@ -678,7 +716,7 @@ func (a *ACLAuditor) checkGrantsUsage(policy ACLPolicy, rawACL string) types.Sug
 			Type:        types.FixTypeManual,
 			Description: "Consider using grants for new access rules. Legacy ACLs continue to work but grants offer more features.",
 			AdminURL:    "https://login.tailscale.com/admin/acls/visual/general-access-rules",
-			DocURL:      "https://tailscale.com/kb/1324/grants",
+			DocURL:      "https://tailscale.com/docs/features/access-control/grants",
 		}
 	} else if hasGrants {
 		finding.Description = "Policy uses the grants format for access control."
@@ -700,7 +738,7 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 		Category:    types.AccessControl,
 		Description: "Taildrop allows direct file transfer between tailnet devices.",
 		Remediation: "If Taildrop poses a data exfiltration risk, disable it via nodeAttrs.",
-		Source:      "https://tailscale.com/kb/1106/taildrop",
+		Source:      "https://tailscale.com/docs/features/taildrop",
 		Pass:        true, // Informational only - default Taildrop enabled is not a misconfiguration
 	}
 
