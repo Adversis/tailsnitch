@@ -108,7 +108,7 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "Reusable auth keys are dangerous if stolen - they allow unlimited unauthorized device additions until expiry.",
 		Remediation: "Store reusable keys in a secrets manager. Prefer one-off keys for single device provisioning. Review and delete unnecessary reusable keys.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -151,9 +151,9 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 		Title:       "Auth keys with long expiry period",
 		Severity:    types.High,
 		Category:    types.Authentication,
-		Description: "Auth keys with expiry periods longer than 90 days increase the exposure window if compromised.",
-		Remediation: "Use shorter expiry periods for auth keys. The maximum is 90 days, but shorter periods reduce risk.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Description: "Auth keys valid for more than 90 days widen the window in which a leaked key can be used.",
+		Remediation: "Set a shorter expirySeconds when creating auth keys. 90 days is the API default, not a ceiling: keys created through the API can outlive it, so a long-lived key is a deliberate choice worth revisiting.",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -173,7 +173,7 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	if len(longExpiryKeys) > 0 {
 		finding.Pass = false
 		finding.Details = longExpiryKeys
-		finding.Description = fmt.Sprintf("Found %d auth key(s) with >90 days until expiry.", len(longExpiryKeys))
+		finding.Description = fmt.Sprintf("Found %d auth key(s) with more than 90 days until expiry.", len(longExpiryKeys))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeAPI,
 			Description: "Delete long-expiry keys and recreate with shorter expiry",
@@ -194,7 +194,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "Pre-authorized keys allow devices to join without admin approval, bypassing device approval controls.",
 		Remediation: "Restrict pre-authorized keys to essential automation use cases. Use webhooks to alert on new device additions.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -249,7 +249,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "For CI/CD and temporary workloads, ephemeral keys are recommended as nodes are auto-removed after inactivity.",
 		Remediation: "Use ephemeral keys for CI/CD pipelines. Add `tailscale logout` to scripts for immediate removal. Use --state=mem: flag.",
-		Source:      "https://tailscale.com/kb/1111/ephemeral-nodes",
+		Source:      "https://tailscale.com/docs/features/ephemeral-nodes",
 		Pass:        true,
 	}
 
@@ -286,7 +286,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 			Type:        types.FixTypeAPI,
 			Description: "Create ephemeral replacement keys (7-day expiry) and delete old keys",
 			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
-			DocURL:      "https://tailscale.com/kb/1111/ephemeral-nodes",
+			DocURL:      "https://tailscale.com/docs/features/ephemeral-nodes",
 			Items:       fixableItems,
 			AutoFixSafe: false, // User should verify CI/CD usage before replacing
 		}

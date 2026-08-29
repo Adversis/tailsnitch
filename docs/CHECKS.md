@@ -34,7 +34,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [ACL Samples](https://tailscale.com/kb/1192/acl-samples)
+**Documentation:** [ACL Samples](https://tailscale.com/docs/reference/examples/acls)
 
 ---
 
@@ -52,7 +52,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [SSH Rules](https://login.tailscale.com/admin/acls/visual/ssh)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -70,7 +70,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Tests](https://login.tailscale.com/admin/acls/visual/tests)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -87,7 +87,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -105,7 +105,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auto Approvers](https://login.tailscale.com/admin/acls/visual/auto-approvers)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -122,7 +122,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Tag Owners](https://login.tailscale.com/admin/acls/visual/tag-owners)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -139,7 +139,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -156,7 +156,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Groups](https://login.tailscale.com/admin/acls/visual/groups)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -173,7 +173,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Grants](https://tailscale.com/kb/1324/grants)
+**Documentation:** [Grants](https://tailscale.com/docs/features/access-control/grants)
 
 ---
 
@@ -191,7 +191,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Node Attributes](https://login.tailscale.com/admin/acls/visual/node-attributes)
 
-**Documentation:** [Taildrop](https://tailscale.com/kb/1106/taildrop)
+**Documentation:** [Taildrop](https://tailscale.com/docs/features/taildrop)
 
 ---
 
@@ -210,7 +210,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -227,7 +227,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -244,7 +244,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -261,7 +261,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Ephemeral Nodes](https://tailscale.com/kb/1111/ephemeral-nodes)
+**Documentation:** [Ephemeral Nodes](https://tailscale.com/docs/features/ephemeral-nodes)
 
 ---
 
@@ -280,7 +280,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -297,7 +297,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -315,7 +315,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Device Management](https://login.tailscale.com/admin/settings/device-management)
 
-**Documentation:** [Shared Responsibility](https://tailscale.com/kb/1212/shared-responsibility)
+**Documentation:** [Shared Responsibility](https://tailscale.com/docs/concepts/shared-responsibility)
 
 ---
 
@@ -332,7 +332,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -349,7 +349,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Device Authorization](https://tailscale.com/kb/1099/device-authorization)
+**Documentation:** [Device Authorization](https://tailscale.com/docs/features/access-control/device-management/device-approval)
 
 ---
 
@@ -366,7 +366,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Sharing](https://tailscale.com/kb/1084/sharing)
+**Documentation:** [Sharing](https://tailscale.com/docs/features/sharing)
 
 ---
 
@@ -383,7 +383,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Enabling HTTPS](https://tailscale.com/kb/1153/enabling-https)
+**Documentation:** [Enabling HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)
 
 ---
 
@@ -401,7 +401,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -418,7 +418,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Device Management](https://login.tailscale.com/admin/settings/device-management)
 
-**Documentation:** [Device Authorization](https://tailscale.com/kb/1099/device-authorization)
+**Documentation:** [Device Authorization](https://tailscale.com/docs/features/access-control/device-management/device-approval)
 
 ---
 
@@ -433,7 +433,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Remediation:** Enable with `tailscale lock init` on a trusted node.
 
-**Documentation:** [Tailnet Lock](https://tailscale.com/kb/1226/tailnet-lock)
+**Documentation:** [Tailnet Lock](https://tailscale.com/docs/features/tailnet-lock)
 
 ---
 
@@ -450,7 +450,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Users](https://login.tailscale.com/admin/users)
 
-**Documentation:** [Deprovisioning](https://tailscale.com/kb/1184/deprovisioning)
+**Documentation:** [Offboarding users](https://tailscale.com/docs/features/sharing/how-to/offboard)
 
 ---
 
@@ -465,7 +465,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Remediation:** Review pending nodes and sign legitimate ones.
 
-**Documentation:** [Tailnet Lock](https://tailscale.com/kb/1226/tailnet-lock)
+**Documentation:** [Tailnet Lock](https://tailscale.com/docs/features/tailnet-lock)
 
 ---
 
@@ -481,7 +481,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Integrations](https://login.tailscale.com/admin/settings/integrations)
 
-**Documentation:** [Device Posture](https://tailscale.com/kb/1288/device-posture)
+**Documentation:** [Device Posture](https://tailscale.com/docs/features/device-posture)
 
 ---
 
@@ -500,7 +500,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Funnel](https://tailscale.com/kb/1223/funnel)
+**Documentation:** [Funnel](https://tailscale.com/docs/features/tailscale-funnel)
 
 ---
 
@@ -517,7 +517,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Exit Nodes](https://tailscale.com/kb/1103/exit-nodes)
+**Documentation:** [Exit Nodes](https://tailscale.com/docs/features/exit-nodes)
 
 ---
 
@@ -535,7 +535,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Subnets](https://tailscale.com/kb/1019/subnets)
+**Documentation:** [Subnets](https://tailscale.com/docs/features/subnet-routers)
 
 ---
 
@@ -552,7 +552,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [DNS](https://login.tailscale.com/admin/dns)
 
-**Documentation:** [Enabling HTTPS](https://tailscale.com/kb/1153/enabling-https)
+**Documentation:** [Enabling HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)
 
 ---
 
@@ -569,7 +569,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Exit Nodes](https://tailscale.com/kb/1103/exit-nodes)
+**Documentation:** [Exit Nodes](https://tailscale.com/docs/features/exit-nodes)
 
 ---
 
@@ -586,7 +586,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)
+**Documentation:** [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
 
 ---
 
@@ -603,7 +603,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [App Connectors](https://tailscale.com/kb/1281/app-connectors)
+**Documentation:** [App Connectors](https://tailscale.com/docs/features/app-connectors)
 
 ---
 
@@ -622,7 +622,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Session Recording](https://tailscale.com/kb/1246/tailscale-ssh-session-recording)
+**Documentation:** [Session Recording](https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording)
 
 ---
 
@@ -643,7 +643,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -660,7 +660,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Session Recording](https://tailscale.com/kb/1246/tailscale-ssh-session-recording)
+**Documentation:** [Session Recording](https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording)
 
 ---
 
@@ -677,7 +677,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -691,7 +691,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Network Logs](https://login.tailscale.com/admin/logs/network)
 
-**Documentation:** [Network Flow Logs](https://tailscale.com/kb/1219/network-flow-logs)
+**Documentation:** [Network Flow Logs](https://tailscale.com/docs/features/logging/network-flow-logs)
 
 ---
 
@@ -735,7 +735,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Webhooks](https://login.tailscale.com/admin/settings/webhooks)
 
-**Documentation:** [Webhooks](https://tailscale.com/kb/1213/webhooks)
+**Documentation:** [Webhooks](https://tailscale.com/docs/features/webhooks)
 
 ---
 
@@ -747,7 +747,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [OAuth](https://login.tailscale.com/admin/settings/oauth)
 
-**Documentation:** [OAuth Clients](https://tailscale.com/kb/1215/oauth-clients)
+**Documentation:** [OAuth Clients](https://tailscale.com/docs/features/oauth-clients)
 
 ---
 
@@ -759,7 +759,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [SCIM](https://login.tailscale.com/admin/settings/scim)
 
-**Documentation:** [Key Management](https://tailscale.com/kb/1252/key-secret-management)
+**Documentation:** [Key Management](https://tailscale.com/docs/reference/key-secret-management)
 
 ---
 
@@ -771,7 +771,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [User Management](https://login.tailscale.com/admin/settings/user-management)
 
-**Documentation:** [Passkey Admin](https://tailscale.com/kb/1341/tailnet-passkey-admin)
+**Documentation:** [Passkey Admin](https://tailscale.com/docs/reference/tailnet-passkey-admin)
 
 ---
 
@@ -781,7 +781,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Description:** MFA must be configured in your identity provider, not Tailscale.
 
-**Documentation:** [MFA](https://tailscale.com/kb/1075/multifactor-auth)
+**Documentation:** [MFA](https://tailscale.com/docs/multifactor-auth)
 
 ---
 
@@ -791,7 +791,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Description:** HTTP services may be vulnerable to DNS rebinding if they don't validate Host headers.
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -803,7 +803,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [General Settings](https://login.tailscale.com/admin/settings/general)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -820,7 +820,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Webhooks](https://login.tailscale.com/admin/settings/webhooks)
 
-**Documentation:** [Webhooks](https://tailscale.com/kb/1213/webhooks)
+**Documentation:** [Webhooks](https://tailscale.com/docs/features/webhooks)
 
 ---
 
@@ -843,7 +843,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Users](https://login.tailscale.com/admin/users)
 
-**Documentation:** [Roles](https://tailscale.com/kb/1352/roles)
+**Documentation:** [Roles](https://tailscale.com/docs/reference/user-roles)
 
 ---
 
@@ -862,4 +862,4 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [DNS](https://login.tailscale.com/admin/dns)
 
-**Documentation:** [MagicDNS](https://tailscale.com/kb/1081/magicdns)
+**Documentation:** [MagicDNS](https://tailscale.com/docs/features/magicdns)

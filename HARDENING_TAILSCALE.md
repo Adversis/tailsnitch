@@ -168,7 +168,7 @@ Subnet routers are high-value targets—compromise one advertising a /16 and you
 
 ### 2.1 Configure Webhooks for Management Events
 
-Tailscale supports [webhooks](https://tailscale.com/kb/1213/webhooks) for management plane events. Send to Slack, PagerDuty, or wherever your team actually looks.
+Tailscale supports [webhooks](https://tailscale.com/docs/features/webhooks) for management plane events. Send to Slack, PagerDuty, or wherever your team actually looks.
 
 - [ ] Configure webhook endpoint
 - [ ] Enable alerts for critical events:
@@ -680,9 +680,9 @@ Replace subnet routers with app connectors where possible to expose specific app
 ## Additional Resources
 
 - [Full Threat Analysis](https://www.adversis.io/blogs/tailscale-hardening-guide) — Detailed threat scenarios and architectural guidance
-- [Tailscale ACL Documentation](https://tailscale.com/kb/1018/acls/)
+- [Tailscale ACL Documentation](https://tailscale.com/docs/features/access-control/acls)
 - [Tailscale Grants Documentation](https://tailscale.com/kb/1458/grant-examples) — Recommended modern approach
-- [Tailscale Webhooks](https://tailscale.com/kb/1213/webhooks)
+- [Tailscale Webhooks](https://tailscale.com/docs/features/webhooks)
 - [Tailscale Security Bulletins](https://tailscale.com/security-bulletins/)
 - [GitOps ACL Action](https://github.com/tailscale/gitops-acl-action)
 - [Panther Tailscale Detection Rules](https://github.com/panther-labs/panther-analysis/tree/main/rules/tailscale_rules)

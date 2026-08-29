@@ -1,6 +1,8 @@
 package auditor
 
 import (
+	"github.com/tailscale/hujson"
+
 	"testing"
 
 	"github.com/Adversis/tailsnitch/pkg/types"
@@ -83,7 +85,7 @@ func TestCheckAllowAll(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := a.checkAllowAll(tt.policy, tt.rawACL)
+			result := a.checkAllowAll(tt.policy, newPolicyFields([]byte(tt.rawACL)))
 
 			if result.Pass != tt.wantPass {
 				t.Errorf("Pass = %v, want %v", result.Pass, tt.wantPass)
@@ -475,5 +477,42 @@ func TestCheckGroupsExist(t *testing.T) {
 				t.Errorf("ID = %q, want ACL-008", result.ID)
 			}
 		})
+	}
+}
+
+func TestCheckAllowAllIgnoresCommentsInPolicy(t *testing.T) {
+	// Regression: field presence was detected by searching the raw HuJSON for
+	// `"acls"`, so a comment mentioning the key made an omitted section look
+	// present and hid the default allow-all policy.
+	a := &ACLAuditor{}
+
+	hujsonWithComment := []byte(`{
+		// This tailnet has no "acls" section on purpose, see the "grants" RFC.
+		"tagOwners": {"tag:server": ["group:admin"]}
+	}`)
+	standardized, err := hujson.Standardize(hujsonWithComment)
+	if err != nil {
+		t.Fatalf("standardizing test policy: %v", err)
+	}
+
+	got := a.checkAllowAll(ACLPolicy{}, newPolicyFields(standardized))
+	if got.Pass {
+		t.Error("checkAllowAll() Pass = true, want false: the policy omits acls and grants, leaving the default allow-all in force")
+	}
+	if got.Severity != types.Critical {
+		t.Errorf("checkAllowAll() severity = %s, want CRITICAL", got.Severity)
+	}
+}
+
+func TestPolicyFieldsReportsUnparseablePolicy(t *testing.T) {
+	fields := newPolicyFields([]byte(`not json`))
+	if fields.parsed {
+		t.Error("newPolicyFields() parsed = true for invalid JSON")
+	}
+
+	a := &ACLAuditor{}
+	got := a.checkAllowAll(ACLPolicy{}, fields)
+	if got.Pass {
+		t.Error("checkAllowAll() Pass = true for an unparseable policy; it should not claim the rules were evaluated")
 	}
 }
