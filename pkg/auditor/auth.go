@@ -22,6 +22,7 @@ func NewAuthAuditor(c *client.Client) *AuthAuditor {
 // keyInfo holds parsed auth key information for auditing
 type keyInfo struct {
 	ID            string
+	Description   string
 	Reusable      bool
 	Preauthorized bool
 	Ephemeral     bool
@@ -31,56 +32,57 @@ type keyInfo struct {
 	Expires       time.Time
 }
 
+// newKeyInfo projects an API key into the fields the auth checks care about.
+func newKeyInfo(key client.Key) keyInfo {
+	info := keyInfo{
+		ID:            key.ID,
+		Description:   key.Description,
+		Created:       key.Created,
+		Expires:       key.Expires,
+		Reusable:      key.Capabilities.Devices.Create.Reusable,
+		Preauthorized: key.Capabilities.Devices.Create.Preauthorized,
+		Ephemeral:     key.Capabilities.Devices.Create.Ephemeral,
+		Tags:          key.Capabilities.Devices.Create.Tags,
+	}
+	if !key.Expires.IsZero() {
+		info.DaysToExpiry = int(time.Until(key.Expires).Hours() / 24)
+	}
+	return info
+}
+
+// label returns a human-readable identifier for a key, preferring its
+// description over the opaque key ID.
+func (k keyInfo) label() string {
+	if k.Description != "" {
+		return fmt.Sprintf("%s (%s)", k.Description, k.ID)
+	}
+	return k.ID
+}
+
 // Audit performs authentication-related security checks
 func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
-	// Get all auth keys
-	keyIDs, err := a.client.GetKeys(ctx)
+	// Get the tailnet's machine auth keys. The keys endpoint also returns API
+	// access tokens, OAuth clients and federated identities, which have no
+	// device-creation capabilities; GetAuthKeys filters those out.
+	apiKeys, err := a.client.GetAuthKeys(ctx)
 	if err != nil {
-		// Auth keys might not be accessible with all API keys
+		// Auth keys might not be accessible with all credentials
 		findings = append(findings, types.Suggestion{
 			ID:          "AUTH-ERR",
 			Title:       "Could not retrieve auth keys",
 			Severity:    types.Informational,
 			Category:    types.Authentication,
-			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. This may require additional API permissions.", err),
+			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. This may require the auth_keys:read scope.", err),
 			Pass:        true,
 		})
 		return findings, nil
 	}
 
-	var keys []keyInfo
-	for _, id := range keyIDs {
-		key, err := a.client.GetKey(ctx, id)
-		if err != nil {
-			continue // Skip keys we can't fetch
-		}
-
-		info := keyInfo{
-			ID:      key.ID,
-			Created: key.Created,
-			Expires: key.Expires,
-		}
-
-		// Calculate days to expiry
-		if !key.Expires.IsZero() {
-			info.DaysToExpiry = int(time.Until(key.Expires).Hours() / 24)
-		}
-
-		// Extract capabilities
-		if key.Capabilities.Devices.Create.Reusable {
-			info.Reusable = true
-		}
-		if key.Capabilities.Devices.Create.Preauthorized {
-			info.Preauthorized = true
-		}
-		if key.Capabilities.Devices.Create.Ephemeral {
-			info.Ephemeral = true
-		}
-		info.Tags = key.Capabilities.Devices.Create.Tags
-
-		keys = append(keys, info)
+	keys := make([]keyInfo, 0, len(apiKeys))
+	for _, key := range apiKeys {
+		keys = append(keys, newKeyInfo(key))
 	}
 
 	// AUTH-001: Check for reusable auth keys

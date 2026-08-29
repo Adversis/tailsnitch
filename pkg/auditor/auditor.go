@@ -78,7 +78,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		})
 	} else {
 		// Standardize HuJSON (with comments) to valid JSON first
-		standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.ACL))
+		standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.HuJSON))
 		if err != nil {
 			report.Suggestions = append(report.Suggestions, types.Suggestion{
 				ID:          "SYS-002",

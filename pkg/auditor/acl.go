@@ -103,7 +103,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 
 	// Parse the ACL - first standardize HuJSON (with comments) to JSON
 	var policy ACLPolicy
-	standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.ACL))
+	standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.HuJSON))
 	if err != nil {
 		findings = append(findings, types.Suggestion{
 			ID:          "ACL-ERR",
@@ -125,7 +125,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	}
 
 	// ACL-001: Check for default "allow all" policy
-	findings = append(findings, a.checkAllowAll(policy, aclHuJSON.ACL))
+	findings = append(findings, a.checkAllowAll(policy, aclHuJSON.HuJSON))
 
 	// ACL-002: Check for SSH autogroup:nonroot misconfiguration
 	findings = append(findings, a.checkSSHNonrootMisconfig(policy))
@@ -149,7 +149,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, a.checkGroupsExist(policy))
 
 	// ACL-009: Check grants usage (newer format)
-	findings = append(findings, a.checkGrantsUsage(policy, aclHuJSON.ACL))
+	findings = append(findings, a.checkGrantsUsage(policy, aclHuJSON.HuJSON))
 
 	// ACL-010: Check Taildrop configuration
 	findings = append(findings, a.checkTaildropConfig(policy))

@@ -373,7 +373,7 @@ func (d *DeviceAuditor) checkUserDevicesWithTags(devices []*client.Device) types
 
 			if isUserDevice {
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s (%s) - tags: %v", dev.Hostname, dev.OS, dev.Tags),
 				})
@@ -510,12 +510,9 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 	var staleDevices []string
 
 	for _, dev := range devices {
-		if dev.LastSeen == "" {
-			continue
-		}
-
-		lastSeen, err := time.Parse(time.RFC3339, dev.LastSeen)
-		if err != nil {
+		lastSeen, ok := dev.LastSeenTime()
+		if !ok {
+			// The API omits lastSeen for devices currently connected to control.
 			continue
 		}
 
@@ -533,17 +530,14 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 		// Build fixable items
 		var fixableItems []types.FixableItem
 		for _, dev := range devices {
-			if dev.LastSeen == "" {
-				continue
-			}
-			lastSeen, err := time.Parse(time.RFC3339, dev.LastSeen)
-			if err != nil {
+			lastSeen, ok := dev.LastSeenTime()
+			if !ok {
 				continue
 			}
 			if lastSeen.Before(staleThreshold) {
 				daysSince := int(time.Since(lastSeen).Hours() / 24)
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s - last seen %d days ago", dev.Hostname, daysSince),
 				})
@@ -590,7 +584,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 		for _, dev := range devices {
 			if !dev.Authorized {
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s - user: %s", dev.Hostname, dev.User),
 				})
@@ -765,16 +759,11 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 			continue // Already flagged in DEV-001
 		}
 
-		if dev.Expires == "" {
+		if dev.Expires.IsZero() {
 			continue
 		}
 
-		expires, err := time.Parse(time.RFC3339, dev.Expires)
-		if err != nil {
-			continue
-		}
-
-		daysUntilExpiry := int(expires.Sub(now).Hours() / 24)
+		daysUntilExpiry := int(dev.Expires.Sub(now).Hours() / 24)
 
 		if isDevDevice(dev) {
 			if daysUntilExpiry > devDeviceMaxDays {
