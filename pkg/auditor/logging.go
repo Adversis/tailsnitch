@@ -707,7 +707,7 @@ func (l *LoggingAuditor) checkDevicePosture(tc *TailnetContext) types.Suggestion
 		ID:          "DEV-014",
 		Title:       "Device posture configuration",
 		Severity:    types.Informational,
-		Category:    types.LoggingAdmin,
+		Category:    types.DeviceSecurity,
 		Description: "Device posture integrations (Intune, Jamf, CrowdStrike, Kolide) let policy restrict access based on device health and compliance.",
 		Remediation: "If your plan includes it, connect your MDM or EDR and reference posture attributes from the tailnet policy file to keep non-compliant devices out.",
 		Source:      "https://tailscale.com/docs/features/device-posture",

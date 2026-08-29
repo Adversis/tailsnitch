@@ -80,7 +80,7 @@ func NewCheckRegistry() *CheckRegistry {
 		{ID: "DEV-011", Title: "Unique users in tailnet", Category: DeviceSecurity, CCMappings: []string{"CC6.1"}},
 		{ID: "DEV-012", Title: "Nodes awaiting Tailnet Lock signature", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC7.1"}},
 		{ID: "DEV-013", Title: "User devices with key expiry disabled", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC6.3"}},
-		{ID: "DEV-014", Title: "Device posture configuration", Category: LoggingAdmin, CCMappings: []string{"CC6.1", "CC7.1"}},
+		{ID: "DEV-014", Title: "Device posture configuration", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC7.1"}},
 		{ID: "DEV-015", Title: "Node key used by multiple connections", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC7.1", "CC7.2"}},
 
 		// Network checks - CC6.6 (Boundary Protection), CC6.7 (Transmission Protection)
