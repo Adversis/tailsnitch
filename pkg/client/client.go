@@ -336,9 +336,10 @@ const (
 // machine auth keys; the same endpoint also returns API access tokens, OAuth
 // clients and federated identities.
 const (
-	KeyTypeAuth   = "auth"
-	KeyTypeAPI    = "api"
-	KeyTypeClient = "client"
+	KeyTypeAuth      = "auth"
+	KeyTypeAPI       = "api"
+	KeyTypeClient    = "client"
+	KeyTypeFederated = "federated"
 )
 
 // rawGet performs a GET against the API and decodes the JSON response into out.
@@ -500,6 +501,29 @@ func (c *Client) GetOAuthClients(ctx context.Context) ([]Key, error) {
 		}
 	}
 	return clients, nil
+}
+
+// filterFederatedIdentities keeps the live federated identities from a key
+// listing, dropping revoked and invalidated entries.
+func filterFederatedIdentities(keys []Key) []Key {
+	identities := make([]Key, 0, len(keys))
+	for _, key := range keys {
+		if key.KeyType == KeyTypeFederated && !key.Invalid && key.Revoked.IsZero() {
+			identities = append(identities, key)
+		}
+	}
+	return identities
+}
+
+// GetFederatedIdentities fetches the tailnet's workload identity federation
+// entries, which the admin console calls trust credentials. They arrive from
+// the same keys endpoint as auth keys and OAuth clients.
+func (c *Client) GetFederatedIdentities(ctx context.Context) ([]Key, error) {
+	keys, err := c.GetKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterFederatedIdentities(keys), nil
 }
 
 // GetKey fetches details for a specific key

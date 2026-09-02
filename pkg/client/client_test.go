@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	tsapi "tailscale.com/client/tailscale/v2"
 )
@@ -319,6 +320,21 @@ func TestGetKeysRequestsAllAndFiltersAuthKeys(t *testing.T) {
 	}
 	if len(clients) != 1 || clients[0].ID != "k2" {
 		t.Errorf("GetOAuthClients() = %#v, want just k2", clients)
+	}
+}
+
+func TestGetFederatedIdentitiesFiltersByKeyType(t *testing.T) {
+	keys := []Key{
+		{ID: "k1", KeyType: KeyTypeAuth},
+		{ID: "k2", KeyType: KeyTypeFederated, Subject: "repo:org/repo:ref:refs/heads/main"},
+		{ID: "k3", KeyType: KeyTypeClient},
+		{ID: "k4", KeyType: KeyTypeFederated, Invalid: true},
+		{ID: "k5", KeyType: KeyTypeFederated, Revoked: time.Now()},
+	}
+
+	got := filterFederatedIdentities(keys)
+	if len(got) != 1 || got[0].ID != "k2" {
+		t.Errorf("filterFederatedIdentities returned %v, want only k2", got)
 	}
 }
 
