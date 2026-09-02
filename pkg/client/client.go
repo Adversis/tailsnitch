@@ -2,16 +2,19 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
-	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/time/rate"
-	"tailscale.com/client/tailscale"
+	tsapi "tailscale.com/client/tailscale/v2"
 )
 
 const (
@@ -68,7 +71,11 @@ func (e *APIError) Is(target error) bool {
 	return errors.Is(e.Kind, target)
 }
 
-// classifyError analyzes an error and returns appropriate classification
+// classifyError analyzes an error and returns appropriate classification.
+//
+// The v2 API client returns a typed tsapi.APIError carrying the HTTP status, so
+// that is consulted first. String matching remains as a fallback for transport
+// errors and for anything that does not surface a status code.
 func classifyError(err error, op, resource string) *APIError {
 	if err == nil {
 		return nil
@@ -80,37 +87,42 @@ func classifyError(err error, op, resource string) *APIError {
 		Err:      err,
 	}
 
+	// Prefer the typed error from the API client, which carries a real status code.
+	var tsErr tsapi.APIError
+	if errors.As(err, &tsErr) && tsErr.Status != 0 {
+		apiErr.StatusCode = tsErr.Status
+		if classifyStatus(apiErr, resource) {
+			return apiErr
+		}
+	}
+
 	errStr := strings.ToLower(err.Error())
 
 	// Check for rate limiting
 	if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "too many requests") {
-		apiErr.Kind = ErrRateLimit
-		apiErr.StatusCode = 429
-		apiErr.Suggestion = "Wait a few minutes and try again. Consider reducing request frequency."
+		apiErr.StatusCode = http.StatusTooManyRequests
+		classifyStatus(apiErr, resource)
 		return apiErr
 	}
 
 	// Check for authentication errors
 	if strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "api token invalid") {
-		apiErr.Kind = ErrAuthentication
-		apiErr.StatusCode = 401
-		apiErr.Suggestion = "Check your TS_API_KEY or OAuth credentials. Generate a new key at: https://login.tailscale.com/admin/settings/keys"
+		apiErr.StatusCode = http.StatusUnauthorized
+		classifyStatus(apiErr, resource)
 		return apiErr
 	}
 
 	// Check for permission errors
 	if strings.Contains(errStr, "403") || strings.Contains(errStr, "forbidden") || strings.Contains(errStr, "permission") {
-		apiErr.Kind = ErrPermission
-		apiErr.StatusCode = 403
-		apiErr.Suggestion = fmt.Sprintf("Your API key lacks permission to access %s. Verify key scopes at: https://login.tailscale.com/admin/settings/keys", resource)
+		apiErr.StatusCode = http.StatusForbidden
+		classifyStatus(apiErr, resource)
 		return apiErr
 	}
 
 	// Check for not found errors
 	if strings.Contains(errStr, "404") || strings.Contains(errStr, "not found") {
-		apiErr.Kind = ErrNotFound
-		apiErr.StatusCode = 404
-		apiErr.Suggestion = fmt.Sprintf("The requested %s was not found. Verify it exists and you have access.", resource)
+		apiErr.StatusCode = http.StatusNotFound
+		classifyStatus(apiErr, resource)
 		return apiErr
 	}
 
@@ -134,9 +146,32 @@ func classifyError(err error, op, resource string) *APIError {
 	return apiErr
 }
 
+// classifyStatus fills in Kind and Suggestion from apiErr.StatusCode.
+// It reports whether the status was recognized.
+func classifyStatus(apiErr *APIError, resource string) bool {
+	switch apiErr.StatusCode {
+	case http.StatusTooManyRequests:
+		apiErr.Kind = ErrRateLimit
+		apiErr.Suggestion = "Wait a few minutes and try again. Consider reducing request frequency."
+	case http.StatusUnauthorized:
+		apiErr.Kind = ErrAuthentication
+		apiErr.Suggestion = "Check your TS_API_KEY or OAuth credentials. Generate a new key at: https://login.tailscale.com/admin/settings/keys"
+	case http.StatusForbidden:
+		apiErr.Kind = ErrPermission
+		apiErr.Suggestion = fmt.Sprintf("Your credential lacks the scope needed to read %s. Review scopes at: https://login.tailscale.com/admin/settings/keys", resource)
+	case http.StatusNotFound:
+		apiErr.Kind = ErrNotFound
+		apiErr.Suggestion = fmt.Sprintf("The requested %s was not found. Verify it exists and you have access.", resource)
+	default:
+		apiErr.StatusCode = 0
+		return false
+	}
+	return true
+}
+
 // Client wraps the Tailscale API client
 type Client struct {
-	ts      *tailscale.Client
+	ts      *tsapi.Client
 	tailnet string
 	limiter *rate.Limiter
 }
@@ -168,57 +203,42 @@ func (c *Client) wait(ctx context.Context) error {
 // OAuth is preferred when both are set.
 // The client includes built-in rate limiting to prevent API throttling.
 func New(tailnet string) (*Client, error) {
-	// If tailnet not specified, use "-" to indicate the default tailnet for the API key
+	// If tailnet not specified, use "-" to indicate the default tailnet for the credential.
 	if tailnet == "" {
 		tailnet = "-"
 	}
 
-	// Enable the unstable API acknowledgment
-	tailscale.I_Acknowledge_This_API_Is_Unstable = true
-
 	// Create rate limiter: allows DefaultRateLimit requests/sec with burst of DefaultBurstSize
 	limiter := rate.NewLimiter(rate.Limit(DefaultRateLimit), DefaultBurstSize)
+
+	ts := &tsapi.Client{Tailnet: tailnet}
 
 	// Check for OAuth credentials first (preferred)
 	oauthClientID := os.Getenv("TS_OAUTH_CLIENT_ID")
 	oauthClientSecret := os.Getenv("TS_OAUTH_CLIENT_SECRET")
 
-	if oauthClientID != "" && oauthClientSecret != "" {
-		return newWithOAuth(tailnet, oauthClientID, oauthClientSecret, limiter)
+	switch {
+	case oauthClientID != "" && oauthClientSecret != "":
+		// The token URL is derived from the client's BaseURL
+		// (https://api.tailscale.com/api/v2/oauth/token).
+		ts.Auth = &tsapi.OAuth{
+			ClientID:     oauthClientID,
+			ClientSecret: oauthClientSecret,
+		}
+	default:
+		apiKey := os.Getenv("TS_API_KEY")
+		if apiKey == "" {
+			apiKey = os.Getenv("TSKEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("authentication required: set TS_API_KEY or TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET")
+		}
+		ts.APIKey = apiKey
 	}
 
-	// Fall back to API key
-	apiKey := os.Getenv("TS_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("TSKEY")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("authentication required: set TS_API_KEY or TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET")
-	}
-
-	ts := tailscale.NewClient(tailnet, tailscale.APIKey(apiKey))
-
-	return &Client{
-		ts:      ts,
-		tailnet: tailnet,
-		limiter: limiter,
-	}, nil
-}
-
-// newWithOAuth creates a client using OAuth client credentials
-func newWithOAuth(tailnet, clientID, clientSecret string, limiter *rate.Limiter) (*Client, error) {
-	oauthConfig := &clientcredentials.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		TokenURL:     "https://api.tailscale.com/api/v2/oauth/token",
-	}
-
-	// Create an HTTP client that handles OAuth token management
-	httpClient := oauthConfig.Client(context.Background())
-
-	// Create Tailscale client with a dummy API key (won't be used since we override HTTPClient)
-	ts := tailscale.NewClient(tailnet, tailscale.APIKey("oauth"))
-	ts.HTTPClient = httpClient
+	// Touch a resource so the client finishes initialization (BaseURL, HTTP,
+	// and the OAuth-wrapped transport) before rawGet reaches for those fields.
+	_ = ts.Devices()
 
 	return &Client{
 		ts:      ts,
@@ -232,72 +252,262 @@ func (c *Client) Tailnet() string {
 	return c.tailnet
 }
 
-// GetACL fetches the current ACL policy
-func (c *Client) GetACL(ctx context.Context) (*tailscale.ACL, error) {
+// Device is the API device model plus fields the typed client does not model yet.
+type Device struct {
+	tsapi.Device
+
+	// MultipleConnections reports that several devices are currently connected
+	// using this node key, which usually means node state was copied between
+	// machines. The field is omitted by the API when only one connection is live.
+	MultipleConnections bool `json:"multipleConnections"`
+}
+
+// LastSeenTime returns the device's last-seen timestamp and whether one is set.
+// The API omits lastSeen for devices that are currently connected to control.
+func (d *Device) LastSeenTime() (time.Time, bool) {
+	if d.LastSeen == nil || d.LastSeen.IsZero() {
+		return time.Time{}, false
+	}
+	return d.LastSeen.Time, true
+}
+
+// DNSConfig represents the DNS configuration
+type DNSConfig struct {
+	MagicDNS    bool
+	NameServers []string
+	SearchPaths []string
+}
+
+// Type aliases so callers do not need to import the API client directly.
+type (
+	Key                     = tsapi.Key
+	KeyCapabilities         = tsapi.KeyCapabilities
+	CreateKeyRequest        = tsapi.CreateKeyRequest
+	RawACL                  = tsapi.RawACL
+	ACL                     = tsapi.ACL
+	TailnetSettings         = tsapi.TailnetSettings
+	User                    = tsapi.User
+	UserRole                = tsapi.UserRole
+	UserStatus              = tsapi.UserStatus
+	UserType                = tsapi.UserType
+	Webhook                 = tsapi.Webhook
+	WebhookSubscriptionType = tsapi.WebhookSubscriptionType
+	Contacts                = tsapi.Contacts
+	PostureIntegration      = tsapi.PostureIntegration
+	DeviceRoutes            = tsapi.DeviceRoutes
+	LogType                 = tsapi.LogType
+)
+
+// User statuses and roles reported by the users endpoint.
+const (
+	UserStatusSuspended     = tsapi.UserStatusSuspended
+	UserStatusActive        = tsapi.UserStatusActive
+	UserStatusNeedsApproval = tsapi.UserStatusNeedsApproval
+
+	UserTypeShared = tsapi.UserTypeShared
+
+	UserRoleOwner        = tsapi.UserRoleOwner
+	UserRoleAdmin        = tsapi.UserRoleAdmin
+	UserRoleITAdmin      = tsapi.UserRoleITAdmin
+	UserRoleNetworkAdmin = tsapi.UserRoleNetworkAdmin
+)
+
+// Webhook subscription types this tool treats as security-critical.
+const (
+	WebhookCategoryTailnetManagement = tsapi.WebhookCategoryTailnetManagement
+	WebhookNodeCreated               = tsapi.WebhookNodeCreated
+	WebhookNodeDeleted               = tsapi.WebhookNodeDeleted
+	WebhookNodeApproved              = tsapi.WebhookNodeApproved
+	WebhookNodeNeedsApproval         = tsapi.WebhookNodeNeedsApproval
+	WebhookPolicyUpdate              = tsapi.WebhookPolicyUpdate
+	WebhookUserCreated               = tsapi.WebhookUserCreated
+	WebhookUserDeleted               = tsapi.WebhookUserDeleted
+	WebhookUserSuspended             = tsapi.WebhookUserSuspended
+	WebhookUserRoleUpdated           = tsapi.WebhookUserRoleUpdated
+)
+
+// Log types for logstream configuration lookups.
+const (
+	LogTypeConfiguration = tsapi.LogTypeConfig
+	LogTypeNetwork       = tsapi.LogTypeNetwork
+)
+
+// Auth key types returned by the keys endpoint. Only KeyTypeAuth entries are
+// machine auth keys; the same endpoint also returns API access tokens, OAuth
+// clients and federated identities.
+const (
+	KeyTypeAuth   = "auth"
+	KeyTypeAPI    = "api"
+	KeyTypeClient = "client"
+)
+
+// rawGet performs a GET against the API and decodes the JSON response into out.
+//
+// The typed client covers almost everything tailsnitch needs, but a few response
+// fields (notably multipleConnections) are not modelled by it yet. This mirrors
+// the client's own auth handling: OAuth and identity federation are applied by
+// the wrapped HTTP client, and an API key is sent as basic auth.
+func (c *Client) rawGet(ctx context.Context, out any, query url.Values, pathElements ...string) error {
+	u := *c.ts.BaseURL
+	u.Path = "/api/v2/" + strings.Join(pathElements, "/")
+	u.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if c.ts.UserAgent != "" {
+		req.Header.Set("User-Agent", c.ts.UserAgent)
+	}
+	if c.ts.APIKey != "" {
+		req.SetBasicAuth(c.ts.APIKey, "")
+	}
+
+	resp, err := c.ts.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		apiErr := tsapi.APIError{Status: resp.StatusCode}
+		// Best effort: the API returns a JSON body with a message on errors.
+		_ = json.Unmarshal(body, &apiErr)
+		apiErr.Status = resp.StatusCode
+		if apiErr.Message == "" {
+			apiErr.Message = strings.TrimSpace(string(body))
+		}
+		return apiErr
+	}
+
+	return json.Unmarshal(body, out)
+}
+
+// allFields requests the API's full field set rather than its limited default.
+var allFields = url.Values{"fields": []string{"all"}}
+
+// GetACL fetches the current ACL policy in parsed form
+func (c *Client) GetACL(ctx context.Context) (*ACL, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	acl, err := c.ts.ACL(ctx)
+	acl, err := c.ts.PolicyFile().Get(ctx)
 	if err != nil {
 		return nil, classifyError(err, "GetACL", "ACL policy")
 	}
 	return acl, nil
 }
 
-// GetACLHuJSON fetches the ACL policy in HuJSON format
-func (c *Client) GetACLHuJSON(ctx context.Context) (*tailscale.ACLHuJSON, error) {
+// GetACLHuJSON fetches the ACL policy in raw HuJSON format
+func (c *Client) GetACLHuJSON(ctx context.Context) (*RawACL, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	acl, err := c.ts.ACLHuJSON(ctx)
+	acl, err := c.ts.PolicyFile().Raw(ctx)
 	if err != nil {
 		return nil, classifyError(err, "GetACLHuJSON", "ACL policy")
 	}
 	return acl, nil
 }
 
-// GetDevices fetches all devices in the tailnet
-func (c *Client) GetDevices(ctx context.Context) ([]*tailscale.Device, error) {
+// GetDevices fetches all devices in the tailnet.
+//
+// All fields are requested: the API's default field set omits advertisedRoutes,
+// enabledRoutes, sshEnabled, postureIdentity and clientConnectivity, which the
+// network and device checks depend on.
+func (c *Client) GetDevices(ctx context.Context) ([]*Device, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	devices, err := c.ts.Devices(ctx, nil)
-	if err != nil {
+
+	var resp struct {
+		Devices []*Device `json:"devices"`
+	}
+	if err := c.rawGet(ctx, &resp, allFields, "tailnet", url.PathEscape(c.tailnet), "devices"); err != nil {
 		return nil, classifyError(err, "GetDevices", "devices")
 	}
-	return devices, nil
+	return resp.Devices, nil
 }
 
-// GetDevice fetches a specific device by ID
-func (c *Client) GetDevice(ctx context.Context, deviceID string) (*tailscale.Device, error) {
+// GetDevice fetches a specific device by ID, with all fields populated.
+func (c *Client) GetDevice(ctx context.Context, deviceID string) (*Device, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	device, err := c.ts.Device(ctx, deviceID, nil)
-	if err != nil {
+
+	var dev Device
+	if err := c.rawGet(ctx, &dev, allFields, "device", url.PathEscape(deviceID)); err != nil {
 		return nil, classifyError(err, "GetDevice", fmt.Sprintf("device %s", deviceID))
 	}
-	return device, nil
+	return &dev, nil
 }
 
-// GetKeys fetches all auth key IDs
-func (c *Client) GetKeys(ctx context.Context) ([]string, error) {
+// GetKeys fetches every key in the tailnet.
+//
+// all=true is required: without it the API returns only the keys owned by the
+// calling user, and for an OAuth-derived token it returns the tailnet's OAuth
+// clients rather than its auth keys. Callers that want machine auth keys should
+// filter on Key.KeyType == KeyTypeAuth.
+func (c *Client) GetKeys(ctx context.Context) ([]Key, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	keys, err := c.ts.Keys(ctx)
+	keys, err := c.ts.Keys().List(ctx, true)
 	if err != nil {
 		return nil, classifyError(err, "GetKeys", "auth keys")
 	}
 	return keys, nil
 }
 
-// GetKey fetches details for a specific auth key
-func (c *Client) GetKey(ctx context.Context, keyID string) (*tailscale.Key, error) {
+// GetAuthKeys fetches only the machine auth keys in the tailnet, excluding
+// revoked and invalidated keys.
+func (c *Client) GetAuthKeys(ctx context.Context) ([]Key, error) {
+	keys, err := c.GetKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	authKeys := make([]Key, 0, len(keys))
+	for _, key := range keys {
+		if key.KeyType != "" && key.KeyType != KeyTypeAuth {
+			continue
+		}
+		if key.Invalid || !key.Revoked.IsZero() {
+			continue
+		}
+		authKeys = append(authKeys, key)
+	}
+	return authKeys, nil
+}
+
+// GetOAuthClients fetches the tailnet's OAuth clients.
+func (c *Client) GetOAuthClients(ctx context.Context) ([]Key, error) {
+	keys, err := c.GetKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	clients := make([]Key, 0, len(keys))
+	for _, key := range keys {
+		if key.KeyType == KeyTypeClient && !key.Invalid && key.Revoked.IsZero() {
+			clients = append(clients, key)
+		}
+	}
+	return clients, nil
+}
+
+// GetKey fetches details for a specific key
+func (c *Client) GetKey(ctx context.Context, keyID string) (*Key, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	key, err := c.ts.Key(ctx, keyID)
+	key, err := c.ts.Keys().Get(ctx, keyID)
 	if err != nil {
 		return nil, classifyError(err, "GetKey", fmt.Sprintf("auth key %s", keyID))
 	}
@@ -309,7 +519,7 @@ func (c *Client) GetDNSConfig(ctx context.Context) (*DNSConfig, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	prefs, err := c.ts.DNSPreferences(ctx)
+	prefs, err := c.ts.DNS().Preferences(ctx)
 	if err != nil {
 		return nil, classifyError(err, "GetDNSConfig", "DNS preferences")
 	}
@@ -317,7 +527,7 @@ func (c *Client) GetDNSConfig(ctx context.Context) (*DNSConfig, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	nameservers, err := c.ts.NameServers(ctx)
+	nameservers, err := c.ts.DNS().Nameservers(ctx)
 	if err != nil {
 		return nil, classifyError(err, "GetDNSConfig", "nameservers")
 	}
@@ -325,7 +535,7 @@ func (c *Client) GetDNSConfig(ctx context.Context) (*DNSConfig, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	searchPaths, err := c.ts.SearchPaths(ctx)
+	searchPaths, err := c.ts.DNS().SearchPaths(ctx)
 	if err != nil {
 		return nil, classifyError(err, "GetDNSConfig", "search paths")
 	}
@@ -337,34 +547,101 @@ func (c *Client) GetDNSConfig(ctx context.Context) (*DNSConfig, error) {
 	}, nil
 }
 
-// GetDeviceRoutes fetches routes for a specific device
-func (c *Client) GetDeviceRoutes(ctx context.Context, deviceID string) (*tailscale.Routes, error) {
+// GetDeviceRoutes fetches subnet routes for a specific device
+func (c *Client) GetDeviceRoutes(ctx context.Context, deviceID string) (*DeviceRoutes, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
 	}
-	routes, err := c.ts.Routes(ctx, deviceID)
+	routes, err := c.ts.Devices().SubnetRoutes(ctx, deviceID)
 	if err != nil {
 		return nil, classifyError(err, "GetDeviceRoutes", fmt.Sprintf("routes for device %s", deviceID))
 	}
 	return routes, nil
 }
 
-// DNSConfig represents the DNS configuration
-type DNSConfig struct {
-	MagicDNS    bool
-	NameServers []string
-	SearchPaths []string
+// GetTailnetSettings fetches tailnet-wide feature settings (device approval,
+// key expiry duration, network flow logging, posture identity collection, ...).
+func (c *Client) GetTailnetSettings(ctx context.Context) (*TailnetSettings, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
+	settings, err := c.ts.TailnetSettings().Get(ctx)
+	if err != nil {
+		return nil, classifyError(err, "GetTailnetSettings", "tailnet settings")
+	}
+	return settings, nil
 }
 
-// Device is an alias for tailscale.Device
-type Device = tailscale.Device
+// GetUsers fetches every user in the tailnet.
+func (c *Client) GetUsers(ctx context.Context) ([]User, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
+	users, err := c.ts.Users().List(ctx, nil, nil)
+	if err != nil {
+		return nil, classifyError(err, "GetUsers", "users")
+	}
+	return users, nil
+}
+
+// GetWebhooks fetches the tailnet's webhook endpoints.
+func (c *Client) GetWebhooks(ctx context.Context) ([]Webhook, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
+	hooks, err := c.ts.Webhooks().List(ctx)
+	if err != nil {
+		return nil, classifyError(err, "GetWebhooks", "webhooks")
+	}
+	return hooks, nil
+}
+
+// GetContacts fetches the tailnet's account, support and security contacts.
+func (c *Client) GetContacts(ctx context.Context) (*Contacts, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
+	contacts, err := c.ts.Contacts().Get(ctx)
+	if err != nil {
+		return nil, classifyError(err, "GetContacts", "contacts")
+	}
+	return contacts, nil
+}
+
+// GetPostureIntegrations fetches configured device posture integrations.
+func (c *Client) GetPostureIntegrations(ctx context.Context) ([]PostureIntegration, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
+	integrations, err := c.ts.DevicePosture().ListIntegrations(ctx)
+	if err != nil {
+		return nil, classifyError(err, "GetPostureIntegrations", "posture integrations")
+	}
+	return integrations, nil
+}
+
+// HasLogstream reports whether a log streaming destination is configured for the
+// given log type. A 404 from the API means "not configured" rather than an error.
+func (c *Client) HasLogstream(ctx context.Context, logType LogType) (bool, error) {
+	if err := c.wait(ctx); err != nil {
+		return false, err
+	}
+	cfg, err := c.ts.Logging().LogstreamConfiguration(ctx, logType)
+	if err != nil {
+		if tsapi.IsNotFound(err) {
+			return false, nil
+		}
+		return false, classifyError(err, "HasLogstream", fmt.Sprintf("%s log stream", logType))
+	}
+	return cfg != nil && cfg.DestinationType != "", nil
+}
 
 // DeleteKey deletes an auth key by ID
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	if err := c.ts.DeleteKey(ctx, keyID); err != nil {
+	if err := c.ts.Keys().Delete(ctx, keyID); err != nil {
 		return classifyError(err, "DeleteKey", fmt.Sprintf("auth key %s", keyID))
 	}
 	return nil
@@ -375,7 +652,7 @@ func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error {
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	if err := c.ts.DeleteDevice(ctx, deviceID); err != nil {
+	if err := c.ts.Devices().Delete(ctx, deviceID); err != nil {
 		return classifyError(err, "DeleteDevice", fmt.Sprintf("device %s", deviceID))
 	}
 	return nil
@@ -386,7 +663,7 @@ func (c *Client) AuthorizeDevice(ctx context.Context, deviceID string) error {
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	if err := c.ts.AuthorizeDevice(ctx, deviceID); err != nil {
+	if err := c.ts.Devices().SetAuthorized(ctx, deviceID, true); err != nil {
 		return classifyError(err, "AuthorizeDevice", fmt.Sprintf("device %s", deviceID))
 	}
 	return nil
@@ -397,62 +674,58 @@ func (c *Client) SetDeviceTags(ctx context.Context, deviceID string, tags []stri
 	if err := c.wait(ctx); err != nil {
 		return err
 	}
-	if err := c.ts.SetTags(ctx, deviceID, tags); err != nil {
+	if err := c.ts.Devices().SetTags(ctx, deviceID, tags); err != nil {
 		return classifyError(err, "SetDeviceTags", fmt.Sprintf("device %s", deviceID))
 	}
 	return nil
 }
 
-// CreateKey creates a new auth key with the specified capabilities
-func (c *Client) CreateKey(ctx context.Context, caps tailscale.KeyCapabilities) (string, *tailscale.Key, error) {
+// CreateKey creates a new auth key with the specified capabilities.
+// The returned secret cannot be retrieved again after this call.
+func (c *Client) CreateKey(ctx context.Context, caps KeyCapabilities) (string, *Key, error) {
+	return c.CreateKeyWithExpiry(ctx, caps, 0)
+}
+
+// CreateKeyWithExpiry creates a new auth key with a custom expiration.
+// A zero expiry leaves the API default (90 days) in place.
+func (c *Client) CreateKeyWithExpiry(ctx context.Context, caps KeyCapabilities, expiry time.Duration) (string, *Key, error) {
+	if expiry < 0 {
+		return "", nil, fmt.Errorf("expiry must be positive")
+	}
 	if err := c.wait(ctx); err != nil {
 		return "", nil, err
 	}
-	id, key, err := c.ts.CreateKey(ctx, caps)
+
+	key, err := c.ts.Keys().CreateAuthKey(ctx, CreateKeyRequest{
+		Capabilities:  caps,
+		ExpirySeconds: int64(expiry.Seconds()),
+	})
 	if err != nil {
 		return "", nil, classifyError(err, "CreateKey", "auth key")
 	}
-	return id, key, nil
+	return key.Key, key, nil
 }
 
-// CreateKeyWithExpiry creates a new auth key with custom expiration
-func (c *Client) CreateKeyWithExpiry(ctx context.Context, caps tailscale.KeyCapabilities, expiry time.Duration) (string, *tailscale.Key, error) {
+// SetACLHuJSON updates the ACL policy using HuJSON format, without ETag
+// collision detection.
+func (c *Client) SetACLHuJSON(ctx context.Context, acl *RawACL) error {
 	if err := c.wait(ctx); err != nil {
-		return "", nil, err
+		return err
 	}
-	id, key, err := c.ts.CreateKeyWithExpiry(ctx, caps, expiry)
-	if err != nil {
-		return "", nil, classifyError(err, "CreateKeyWithExpiry", "auth key")
+	if err := c.ts.PolicyFile().Set(ctx, acl.HuJSON, ""); err != nil {
+		return classifyError(err, "SetACLHuJSON", "ACL policy")
 	}
-	return id, key, nil
+	return nil
 }
 
-// SetACLHuJSON updates the ACL policy using HuJSON format
-func (c *Client) SetACLHuJSON(ctx context.Context, acl *tailscale.ACLHuJSON) (*tailscale.ACLHuJSON, error) {
+// SetACLHuJSONWithCollisionCheck updates the ACL policy, rejecting the write if
+// the policy changed since it was read.
+func (c *Client) SetACLHuJSONWithCollisionCheck(ctx context.Context, acl *RawACL) error {
 	if err := c.wait(ctx); err != nil {
-		return nil, err
+		return err
 	}
-	result, err := c.ts.SetACLHuJSON(ctx, *acl, false)
-	if err != nil {
-		return nil, classifyError(err, "SetACLHuJSON", "ACL policy")
+	if err := c.ts.PolicyFile().Set(ctx, acl.HuJSON, acl.ETag); err != nil {
+		return classifyError(err, "SetACLHuJSONWithCollisionCheck", "ACL policy")
 	}
-	return result, nil
+	return nil
 }
-
-// SetACLHuJSONWithCollisionCheck updates ACL with ETag collision detection
-func (c *Client) SetACLHuJSONWithCollisionCheck(ctx context.Context, acl *tailscale.ACLHuJSON) (*tailscale.ACLHuJSON, error) {
-	if err := c.wait(ctx); err != nil {
-		return nil, err
-	}
-	result, err := c.ts.SetACLHuJSON(ctx, *acl, true)
-	if err != nil {
-		return nil, classifyError(err, "SetACLHuJSONWithCollisionCheck", "ACL policy")
-	}
-	return result, nil
-}
-
-// KeyCapabilities is an alias for tailscale.KeyCapabilities
-type KeyCapabilities = tailscale.KeyCapabilities
-
-// ACLHuJSON is an alias for tailscale.ACLHuJSON
-type ACLHuJSON = tailscale.ACLHuJSON

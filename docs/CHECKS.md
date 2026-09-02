@@ -1,6 +1,6 @@
 # Tailsnitch Security Checks Reference
 
-This document provides detailed information about all 52 security checks performed by Tailsnitch.
+This document provides detailed information about all 54 security checks performed by Tailsnitch, plus the SYS-* diagnostics emitted when a control could not be evaluated.
 
 ## Check Categories
 
@@ -34,7 +34,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [ACL Samples](https://tailscale.com/kb/1192/acl-samples)
+**Documentation:** [ACL Samples](https://tailscale.com/docs/reference/examples/acls)
 
 ---
 
@@ -52,7 +52,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [SSH Rules](https://login.tailscale.com/admin/acls/visual/ssh)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -70,7 +70,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Tests](https://login.tailscale.com/admin/acls/visual/tests)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -87,7 +87,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -105,7 +105,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auto Approvers](https://login.tailscale.com/admin/acls/visual/auto-approvers)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -122,7 +122,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Tag Owners](https://login.tailscale.com/admin/acls/visual/tag-owners)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -139,7 +139,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -156,7 +156,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Groups](https://login.tailscale.com/admin/acls/visual/groups)
 
-**Documentation:** [Policy Syntax](https://tailscale.com/kb/1337/policy-syntax)
+**Documentation:** [Policy Syntax](https://tailscale.com/docs/reference/syntax/policy-file)
 
 ---
 
@@ -173,7 +173,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls/visual/general-access-rules)
 
-**Documentation:** [Grants](https://tailscale.com/kb/1324/grants)
+**Documentation:** [Grants](https://tailscale.com/docs/features/access-control/grants)
 
 ---
 
@@ -191,7 +191,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Node Attributes](https://login.tailscale.com/admin/acls/visual/node-attributes)
 
-**Documentation:** [Taildrop](https://tailscale.com/kb/1106/taildrop)
+**Documentation:** [Taildrop](https://tailscale.com/docs/features/taildrop)
 
 ---
 
@@ -210,7 +210,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -227,7 +227,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -244,7 +244,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Auth Keys](https://tailscale.com/kb/1085/auth-keys)
+**Documentation:** [Auth Keys](https://tailscale.com/docs/features/access-control/auth-keys)
 
 ---
 
@@ -261,7 +261,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
-**Documentation:** [Ephemeral Nodes](https://tailscale.com/kb/1111/ephemeral-nodes)
+**Documentation:** [Ephemeral Nodes](https://tailscale.com/docs/features/ephemeral-nodes)
 
 ---
 
@@ -280,7 +280,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -297,7 +297,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -305,17 +305,21 @@ This document provides detailed information about all 52 security checks perform
 
 **Severity:** MEDIUM
 
-**Description:** Outdated clients may have security vulnerabilities. Includes 7-day grace period for auto-update rollout.
+**Description:** Outdated clients may have security vulnerabilities.
 
 **What it checks:**
-- Devices more than 2 minor versions behind expected (GitHub releases with 7-day grace)
+- Devices more than two minor versions behind the current stable release, read from `pkgs.tailscale.com/stable/?mode=json`. Tailscale numbers stable releases with an even minor version, so the gap is really "more than one release behind"
 - Devices older than v1.34 (no flow logs support)
+
+If the release feed is unreachable, the baseline falls back to the newest
+version present in the tailnet, and the finding says so: that baseline cannot
+detect a fleet that is uniformly out of date.
 
 **Remediation:** Enable auto-updates in Device management.
 
 **Admin Console:** [Device Management](https://login.tailscale.com/admin/settings/device-management)
 
-**Documentation:** [Shared Responsibility](https://tailscale.com/kb/1212/shared-responsibility)
+**Documentation:** [Shared Responsibility](https://tailscale.com/docs/concepts/shared-responsibility)
 
 ---
 
@@ -332,7 +336,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Tags](https://tailscale.com/kb/1068/tags)
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
 
 ---
 
@@ -349,7 +353,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Device Authorization](https://tailscale.com/kb/1099/device-authorization)
+**Documentation:** [Device Authorization](https://tailscale.com/docs/features/access-control/device-management/device-approval)
 
 ---
 
@@ -366,7 +370,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Sharing](https://tailscale.com/kb/1084/sharing)
+**Documentation:** [Sharing](https://tailscale.com/docs/features/sharing)
 
 ---
 
@@ -383,7 +387,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Enabling HTTPS](https://tailscale.com/kb/1153/enabling-https)
+**Documentation:** [Enabling HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)
 
 ---
 
@@ -401,7 +405,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -412,28 +416,34 @@ This document provides detailed information about all 52 security checks perform
 **Description:** Device approval requires admin review before new devices access the tailnet.
 
 **What it checks:**
-- Heuristic: If all devices authorized with >5 devices, approval may not be enabled
+- `devicesApprovalOn` from the tailnet settings endpoint, reported alongside the authorized and pending device counts
+- Falls back to the pending-device count when `feature_settings:read` is not granted, and says so rather than passing
 
 **Remediation:** Enable device approval in Device management.
 
 **Admin Console:** [Device Management](https://login.tailscale.com/admin/settings/device-management)
 
-**Documentation:** [Device Authorization](https://tailscale.com/kb/1099/device-authorization)
+**Documentation:** [Device Authorization](https://tailscale.com/docs/features/access-control/device-management/device-approval)
 
 ---
 
 ### DEV-010: Tailnet Lock not enabled
 
-**Severity:** HIGH
+**Severity:** HIGH (MEDIUM when enabled with a single signing key)
 
 **Description:** Tailnet Lock prevents attackers from adding devices even with stolen auth keys.
 
 **What it checks:**
-- `tailscale lock status` CLI output
+- Device `tailnetLockError` values from the API, which are only populated when lock is enabled, so a non-empty one confirms lock is on for the tailnet being audited
+- Otherwise `tailscale lock status --json` from the local CLI, including the number of trusted signing keys
 
-**Remediation:** Enable with `tailscale lock init` on a trusted node.
+The API does not expose tailnet lock as a tailnet setting, so the CLI part of
+this check reads the daemon on the machine running tailsnitch, which may not be
+joined to the tailnet named by `--tailnet`. The finding says which source it used.
 
-**Documentation:** [Tailnet Lock](https://tailscale.com/kb/1226/tailnet-lock)
+**Remediation:** Enable with `tailscale lock init` on a trusted node, then add signing keys from at least one other trusted node.
+
+**Documentation:** [Tailnet Lock](https://tailscale.com/docs/features/tailnet-lock)
 
 ---
 
@@ -450,7 +460,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Users](https://login.tailscale.com/admin/users)
 
-**Documentation:** [Deprovisioning](https://tailscale.com/kb/1184/deprovisioning)
+**Documentation:** [Offboarding users](https://tailscale.com/docs/features/sharing/how-to/offboard)
 
 ---
 
@@ -461,27 +471,68 @@ This document provides detailed information about all 52 security checks perform
 **Description:** With Tailnet Lock enabled, new nodes require signatures from trusted keys.
 
 **What it checks:**
-- `tailscale lock status` for "awaiting" or "pending" nodes
+- Device `tailnetLockError` values from the API, which cover the tailnet being audited
+- `FilteredPeers` and `NodeKeySigned` from `tailscale lock status --json` on the local machine
 
 **Remediation:** Review pending nodes and sign legitimate ones.
 
-**Documentation:** [Tailnet Lock](https://tailscale.com/kb/1226/tailnet-lock)
+**Documentation:** [Tailnet Lock](https://tailscale.com/docs/features/tailnet-lock)
 
 ---
 
-### DEV-013: Device posture configuration
+### DEV-013: User devices with key expiry disabled
 
-**Severity:** INFO (Manual Check)
+**Severity:** LOW
 
-**Description:** Device posture integrations (Intune, Jamf, CrowdStrike) restrict access based on compliance.
+**Description:** User devices with key expiry disabled never require re-authentication.
 
-**What it checks:** Manual verification required
+**What it checks:**
+- Untagged, non-external devices with `keyExpiryDisabled` set (tagged devices are covered by DEV-001 at higher severity)
 
-**Remediation:** Configure device posture integration if available on your plan.
+**Remediation:** Re-enable key expiry unless there is a specific operational need.
+
+**Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
+
+**Documentation:** [Key Expiry](https://tailscale.com/docs/features/access-control/key-expiry)
+
+---
+
+### DEV-014: Device posture configuration
+
+**Severity:** INFO
+
+**Description:** Device posture integrations (Intune, Jamf, CrowdStrike, Kolide) restrict access based on device health and compliance.
+
+**What it checks:**
+- Configured integrations from the posture integrations endpoint, named by provider
+- `postureIdentityCollectionOn` from the tailnet settings endpoint
+
+**Remediation:** Connect your MDM or EDR, then reference posture attributes from the tailnet policy file. An integration alone does not restrict access.
 
 **Admin Console:** [Integrations](https://login.tailscale.com/admin/settings/integrations)
 
-**Documentation:** [Device Posture](https://tailscale.com/kb/1288/device-posture)
+**Documentation:** [Device Posture](https://tailscale.com/docs/features/device-posture)
+
+---
+
+### DEV-015: Node key used by multiple connections
+
+**Severity:** HIGH
+
+**Description:** Tailscale reports when several machines are connected using one device's node key, which usually means node state was copied off the original machine.
+
+**What it checks:**
+- The `multipleConnections` device field
+
+The API only reports this while the concurrent connections are live, so an
+attacker who avoids overlapping with the legitimate node will not appear here.
+A finding is strong evidence; a pass is not proof of absence.
+
+**Remediation:** Confirm which machine is legitimate, remove the device, rotate any credentials it held, and re-enroll.
+
+**Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
+
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
@@ -500,7 +551,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Funnel](https://tailscale.com/kb/1223/funnel)
+**Documentation:** [Funnel](https://tailscale.com/docs/features/tailscale-funnel)
 
 ---
 
@@ -517,7 +568,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Exit Nodes](https://tailscale.com/kb/1103/exit-nodes)
+**Documentation:** [Exit Nodes](https://tailscale.com/docs/features/exit-nodes)
 
 ---
 
@@ -535,7 +586,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Subnets](https://tailscale.com/kb/1019/subnets)
+**Documentation:** [Subnets](https://tailscale.com/docs/features/subnet-routers)
 
 ---
 
@@ -546,13 +597,14 @@ This document provides detailed information about all 52 security checks perform
 **Description:** HTTPS certificates publish machine names to public Certificate Transparency logs.
 
 **What it checks:**
-- nodeAttrs for https/cert configuration
+- `httpsEnabled` from the tailnet settings endpoint (needs `networking_settings:read`), which is the tailnet-wide switch for certificate provisioning
+- Falls back to scanning nodeAttrs for https/cert configuration when that setting cannot be read
 
-**Remediation:** Review machine names before enabling HTTPS. Use randomized tailnet DNS name.
+**Remediation:** Review machine names before enabling HTTPS, or disable certificates if unused. See DEV-007 for names that look sensitive.
 
 **Admin Console:** [DNS](https://login.tailscale.com/admin/dns)
 
-**Documentation:** [Enabling HTTPS](https://tailscale.com/kb/1153/enabling-https)
+**Documentation:** [Enabling HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)
 
 ---
 
@@ -569,7 +621,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [Exit Nodes](https://tailscale.com/kb/1103/exit-nodes)
+**Documentation:** [Exit Nodes](https://tailscale.com/docs/features/exit-nodes)
 
 ---
 
@@ -586,7 +638,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)
+**Documentation:** [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
 
 ---
 
@@ -603,7 +655,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Machines](https://login.tailscale.com/admin/machines)
 
-**Documentation:** [App Connectors](https://tailscale.com/kb/1281/app-connectors)
+**Documentation:** [App Connectors](https://tailscale.com/docs/features/app-connectors)
 
 ---
 
@@ -622,7 +674,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Session Recording](https://tailscale.com/kb/1246/tailscale-ssh-session-recording)
+**Documentation:** [Session Recording](https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording)
 
 ---
 
@@ -643,7 +695,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -660,7 +712,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Session Recording](https://tailscale.com/kb/1246/tailscale-ssh-session-recording)
+**Documentation:** [Session Recording](https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording)
 
 ---
 
@@ -677,7 +729,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [ACLs](https://login.tailscale.com/admin/acls)
 
-**Documentation:** [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+**Documentation:** [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 
 ---
 
@@ -685,21 +737,27 @@ This document provides detailed information about all 52 security checks perform
 
 ### LOG-001: Network flow logs configuration
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO
 
-**Description:** Network flow logs are disabled by default (Premium/Enterprise only).
+**Description:** Network flow logs record connections between devices. Disabled by default, available on Premium and Enterprise plans.
+
+**What it checks:**
+- `networkFlowLoggingOn` from the tailnet settings endpoint (needs `logs:network:read`)
 
 **Admin Console:** [Network Logs](https://login.tailscale.com/admin/logs/network)
 
-**Documentation:** [Network Flow Logs](https://tailscale.com/kb/1219/network-flow-logs)
+**Documentation:** [Network Flow Logs](https://tailscale.com/docs/features/logging/network-flow-logs)
 
 ---
 
 ### LOG-002: Log streaming for long-term retention
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO
 
-**Description:** Config logs: 90 days, flow logs: 30 days. Streaming required for longer retention.
+**Description:** Configuration audit logs are kept 90 days and network flow logs 30 days. Streaming is required to keep them longer.
+
+**What it checks:**
+- Whether a streaming destination exists for each log type, via the log stream status endpoint (needs `log_streaming:read`)
 
 **Admin Console:** [Logs](https://login.tailscale.com/admin/logs)
 
@@ -729,25 +787,31 @@ This document provides detailed information about all 52 security checks perform
 
 ### LOG-005: Webhook secrets never expire
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO (LOW when a secret is over a year old)
 
-**Description:** Webhook endpoint secrets have no automatic expiration.
+**Description:** Webhook endpoint secrets have no automatic expiration. If one leaks, anyone can send forged events until it is rotated.
+
+**What it checks:**
+- Configured webhook endpoints and their last-modified time, which moves on secret rotation (needs `webhooks:read`)
 
 **Admin Console:** [Webhooks](https://login.tailscale.com/admin/settings/webhooks)
 
-**Documentation:** [Webhooks](https://tailscale.com/kb/1213/webhooks)
+**Documentation:** [Webhooks](https://tailscale.com/docs/features/webhooks)
 
 ---
 
 ### LOG-006: OAuth clients persist after user removal
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO (HIGH when a client outlives its owner)
 
-**Description:** OAuth clients continue functioning after creating user loses access.
+**Description:** OAuth clients keep working after the user who created them loses tailnet access.
+
+**What it checks:**
+- OAuth clients from the keys endpoint, cross-referenced against the user list to find clients whose creator is suspended or gone (needs `oauth_keys:read` and `users:read`)
 
 **Admin Console:** [OAuth](https://login.tailscale.com/admin/settings/oauth)
 
-**Documentation:** [OAuth Clients](https://tailscale.com/kb/1215/oauth-clients)
+**Documentation:** [OAuth Clients](https://tailscale.com/docs/features/oauth-clients)
 
 ---
 
@@ -759,7 +823,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [SCIM](https://login.tailscale.com/admin/settings/scim)
 
-**Documentation:** [Key Management](https://tailscale.com/kb/1252/key-secret-management)
+**Documentation:** [Key Management](https://tailscale.com/docs/reference/key-secret-management)
 
 ---
 
@@ -771,7 +835,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [User Management](https://login.tailscale.com/admin/settings/user-management)
 
-**Documentation:** [Passkey Admin](https://tailscale.com/kb/1341/tailnet-passkey-admin)
+**Documentation:** [Passkey Admin](https://tailscale.com/docs/reference/tailnet-passkey-admin)
 
 ---
 
@@ -781,7 +845,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Description:** MFA must be configured in your identity provider, not Tailscale.
 
-**Documentation:** [MFA](https://tailscale.com/kb/1075/multifactor-auth)
+**Documentation:** [MFA](https://tailscale.com/docs/multifactor-auth)
 
 ---
 
@@ -791,36 +855,43 @@ This document provides detailed information about all 52 security checks perform
 
 **Description:** HTTP services may be vulnerable to DNS rebinding if they don't validate Host headers.
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
 ### LOG-011: Security contact email configuration
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO (MEDIUM when unset, LOW when unverified)
 
-**Description:** Security contact ensures your team receives security notifications.
+**Description:** The security contact is where Tailscale sends security notifications and bulletins for your tailnet.
+
+**What it checks:**
+- The security contact from the contacts endpoint, including whether it still needs email verification (needs `account_settings:read`)
 
 **Admin Console:** [General Settings](https://login.tailscale.com/admin/settings/general)
 
-**Documentation:** [Security Hardening](https://tailscale.com/kb/1196/security-hardening)
+**Documentation:** [Security Hardening](https://tailscale.com/docs/reference/best-practices/security)
 
 ---
 
 ### LOG-012: Webhooks for critical events
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO (LOW when events are unsubscribed)
 
-**Description:** Webhooks notify external systems about critical events (device additions, ACL changes, etc.).
+**Description:** Webhooks notify external systems about tailnet events such as device additions, policy changes and user role changes.
 
-**Recommended events:**
-- `nodeCreated`, `nodeDeleted`, `nodeApproved`
-- `aclUpdated`
-- `userCreated`, `userDeleted`, `userRoleUpdated`
+**What it checks:**
+- Webhook subscriptions against the critical event list below (needs `webhooks:read`)
+- A `categoryTailnetManagement` subscription satisfies the check, since it covers every event in that group including ones Tailscale adds later
+
+**Critical events:**
+- `nodeCreated`, `nodeDeleted`, `nodeApproved`, `nodeNeedsApproval`
+- `policyUpdate`
+- `userCreated`, `userDeleted`, `userSuspended`, `userRoleUpdated`
 
 **Admin Console:** [Webhooks](https://login.tailscale.com/admin/settings/webhooks)
 
-**Documentation:** [Webhooks](https://tailscale.com/kb/1213/webhooks)
+**Documentation:** [Webhooks](https://tailscale.com/docs/features/webhooks)
 
 ---
 
@@ -828,9 +899,16 @@ This document provides detailed information about all 52 security checks perform
 
 ### USER-001: Review user roles and ownership
 
-**Severity:** INFO (Manual Check)
+**Severity:** INFO (LOW when something needs review)
 
 **Description:** User roles control access to tailnet administration. Regular review prevents privilege creep.
+
+**What it checks (needs `users:read`):**
+- A breakdown of every user by role
+- More than three combined Owner and Admin accounts
+- Suspended users still present in the tailnet
+- Users awaiting approval
+- External (shared) users
 
 **Role hierarchy:**
 1. Owner - Full control, cannot be removed
@@ -843,7 +921,7 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [Users](https://login.tailscale.com/admin/users)
 
-**Documentation:** [Roles](https://tailscale.com/kb/1352/roles)
+**Documentation:** [Roles](https://tailscale.com/docs/reference/user-roles)
 
 ---
 
@@ -862,4 +940,4 @@ This document provides detailed information about all 52 security checks perform
 
 **Admin Console:** [DNS](https://login.tailscale.com/admin/dns)
 
-**Documentation:** [MagicDNS](https://tailscale.com/kb/1081/magicdns)
+**Documentation:** [MagicDNS](https://tailscale.com/docs/features/magicdns)

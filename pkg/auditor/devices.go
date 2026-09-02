@@ -3,6 +3,7 @@ package auditor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -111,17 +112,23 @@ func findTailscaleBinary() (string, error) {
 	return absPath, nil
 }
 
-// getLatestTailscaleVersion fetches the latest stable version from GitHub releases API.
-// Per Tailscale docs, auto-updates take ~7 days to roll out, so we apply a grace period
-// and only consider releases older than 7 days as the "expected" version.
-// Returns the full version string (e.g., "v1.76.6") and parsed major/minor for comparison.
+// stableTrackURL is Tailscale's own package index for the stable release
+// track. It is preferred over the GitHub releases API, which is rate limited
+// to 60 unauthenticated requests per hour and lists releases in publish order
+// across maintenance branches, so a backported 1.98.x published after 1.102.x
+// would be read as the newest release.
+const stableTrackURL = "https://pkgs.tailscale.com/stable/?mode=json"
+
+// getLatestTailscaleVersion returns the current stable Tailscale version.
+//
+// Tailscale numbers stable releases with an even minor version and development
+// releases with an odd one, so a value from this feed is always a stable
+// version to compare client versions against.
 func getLatestTailscaleVersion(ctx context.Context) (versionStr string, major, minor int, ok bool) {
-	// Fetch recent releases (not just latest) so we can apply grace period
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/tailscale/tailscale/releases?per_page=10", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, stableTrackURL, nil)
 	if err != nil {
 		return "", 0, 0, false
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := httpClientWithTimeout.Do(req)
 	if err != nil {
@@ -133,39 +140,21 @@ func getLatestTailscaleVersion(ctx context.Context) (versionStr string, major, m
 		return "", 0, 0, false
 	}
 
-	var releases []struct {
-		TagName     string `json:"tag_name"`
-		PublishedAt string `json:"published_at"`
-		Prerelease  bool   `json:"prerelease"`
+	var track struct {
+		TarballsVersion string `json:"TarballsVersion"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&track); err != nil {
+		return "", 0, 0, false
+	}
+	if track.TarballsVersion == "" {
 		return "", 0, 0, false
 	}
 
-	versionRegex := regexp.MustCompile(`v?(\d+)\.(\d+)`)
-	gracePeriod := 7 * 24 * time.Hour
-
-	// Find the first non-prerelease that's older than the grace period
-	for _, release := range releases {
-		if release.Prerelease {
-			continue
-		}
-
-		publishedAt, err := time.Parse(time.RFC3339, release.PublishedAt)
-		if err != nil {
-			continue
-		}
-
-		// Check if release is older than grace period
-		if time.Since(publishedAt) >= gracePeriod {
-			major, minor, ok = parseVersion(release.TagName, versionRegex)
-			if ok {
-				return release.TagName, major, minor, true
-			}
-		}
+	major, minor, ok = parseVersion(track.TarballsVersion, regexp.MustCompile(`v?(\d+)\.(\d+)`))
+	if !ok {
+		return "", 0, 0, false
 	}
-
-	return "", 0, 0, false
+	return track.TarballsVersion, major, minor, true
 }
 
 // parseVersion extracts major and minor version numbers from a version string
@@ -196,9 +185,16 @@ func NewDeviceAuditor(c *client.Client) *DeviceAuditor {
 	return &DeviceAuditor{client: c}
 }
 
-// Audit performs device-related security checks
-func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// Audit performs device-related security checks.
+//
+// tc carries tailnet-wide state shared with the other auditors. When nil, it is
+// fetched here so an individual auditor can be run on its own.
+func (d *DeviceAuditor) Audit(ctx context.Context, tc *TailnetContext) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
+
+	if tc == nil {
+		tc = FetchTailnetContext(ctx, d.client)
+	}
 
 	devices, err := d.client.GetDevices(ctx)
 	if err != nil {
@@ -231,22 +227,25 @@ func (d *DeviceAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, d.checkSensitiveMachineNames(devices, dnsConfig))
 
 	// DEV-008: Long key expiry (default 180 days)
-	findings = append(findings, d.checkLongKeyExpiry(devices))
+	findings = append(findings, d.checkLongKeyExpiry(devices, tc))
 
 	// DEV-009: Device approval configuration
-	findings = append(findings, d.checkDeviceApproval(devices))
+	findings = append(findings, d.checkDeviceApproval(devices, tc))
 
 	// DEV-010: Tailnet Lock status
-	findings = append(findings, d.checkTailnetLock(ctx))
+	findings = append(findings, d.checkTailnetLock(ctx, devices))
 
 	// DEV-011: Unique users in tailnet
 	findings = append(findings, d.checkUniqueUsers(devices))
 
 	// DEV-012: Nodes awaiting Tailnet Lock signature
-	findings = append(findings, d.checkTailnetLockPending(ctx))
+	findings = append(findings, d.checkTailnetLockPending(ctx, devices))
 
 	// DEV-013: User devices with key expiry disabled
 	findings = append(findings, d.checkUserDevicesKeyExpiryDisabled(devices))
+
+	// DEV-015: Devices sharing a node key across machines
+	findings = append(findings, d.checkDuplicateNodeKeys(devices))
 
 	return findings, nil
 }
@@ -259,7 +258,7 @@ func (d *DeviceAuditor) checkTaggedDevicesKeyExpiry(devices []*client.Device) ty
 		Category:    types.DeviceSecurity,
 		Description: "Tagged devices have key expiry disabled by default, creating indefinite access if credentials are compromised.",
 		Remediation: "Review key expiry settings for tagged devices in admin console. Enable expiry for sensitive infrastructure.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -278,7 +277,7 @@ func (d *DeviceAuditor) checkTaggedDevicesKeyExpiry(devices []*client.Device) ty
 			Type:        types.FixTypeManual,
 			Description: "Enable key expiry for tagged devices",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1068/tags",
+			DocURL:      "https://tailscale.com/docs/features/tags",
 		}
 	}
 
@@ -293,7 +292,7 @@ func (d *DeviceAuditor) checkUserDevicesWithTags(devices []*client.Device) types
 		Category:    types.DeviceSecurity,
 		Description: "Tags are intended for service accounts and servers, not user devices. Tagged user devices remain on network after user removal.",
 		Remediation: "Remove tags from end-user devices. Use tags only for servers and infrastructure. Check for orphaned devices from removed users.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -373,7 +372,7 @@ func (d *DeviceAuditor) checkUserDevicesWithTags(devices []*client.Device) types
 
 			if isUserDevice {
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s (%s) - tags: %v", dev.Hostname, dev.OS, dev.Tags),
 				})
@@ -400,16 +399,18 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 		Category:    types.DeviceSecurity,
 		Description: "Outdated clients may have security vulnerabilities. Customers are responsible for client updates.",
 		Remediation: "Enable auto-updates in Device management. Use MDM to enforce updates. Monitor client versions.",
-		Source:      "https://tailscale.com/kb/1212/shared-responsibility",
+		Source:      "https://tailscale.com/docs/concepts/shared-responsibility",
 		Pass:        true,
 	}
 
 	versionRegex := regexp.MustCompile(`(\d+)\.(\d+)`)
 
-	// Try to get the stable version from GitHub releases (with 7-day grace period for auto-update rollout)
+	// Compare against the current stable release. If that lookup fails, fall
+	// back to the newest version present in the tailnet, which only finds
+	// devices that lag their own fleet: a uniformly outdated tailnet looks
+	// current by that measure, so the finding says which baseline was used.
 	latestVersionStr, latestMajor, latestMinor, gotLatest := getLatestTailscaleVersion(ctx)
 	if !gotLatest {
-		// Fallback: find the latest version among all devices
 		for _, dev := range devices {
 			if dev.ClientVersion == "" {
 				continue
@@ -423,7 +424,7 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 			}
 		}
 		if latestVersionStr != "" {
-			latestVersionStr = latestVersionStr + " (from tailnet)"
+			latestVersionStr += " (newest in this tailnet; the stable release feed was unreachable)"
 		}
 	}
 
@@ -444,7 +445,8 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 			continue
 		}
 
-		// Flag if more than 2 minor versions behind the expected version
+		// Stable minor versions step by two (1.98 -> 1.100 -> 1.102), so a gap
+		// of more than two means the device is at least two releases behind.
 		if major < latestMajor || (major == latestMajor && latestMinor-minor > 2) {
 			versionsBehind := latestMinor - minor
 			if major < latestMajor {
@@ -470,13 +472,13 @@ func (d *DeviceAuditor) checkOutdatedClients(ctx context.Context, devices []*cli
 	if len(outdatedDevices) > 0 {
 		finding.Pass = false
 		// Note: expected version accounts for 7-day auto-update rollout period
-		finding.Details = append([]string{fmt.Sprintf("Expected: %s (after 7-day auto-update rollout)", latestVersionStr)}, outdatedDevices...)
+		finding.Details = append([]string{fmt.Sprintf("Current stable release: %s", latestVersionStr)}, outdatedDevices...)
 		finding.Description = fmt.Sprintf("Found %d device(s) with outdated Tailscale clients.", len(outdatedDevices))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Enable auto-updates in Device management settings",
 			AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
-			DocURL:      "https://tailscale.com/kb/1212/shared-responsibility",
+			DocURL:      "https://tailscale.com/docs/concepts/shared-responsibility",
 		}
 	}
 
@@ -502,7 +504,7 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 		Category:    types.DeviceSecurity,
 		Description: "Devices not seen in over 60 days may be unused and should be reviewed for removal.",
 		Remediation: "Review and remove unused devices. Implement device lifecycle policies.",
-		Source:      "https://tailscale.com/kb/1068/tags",
+		Source:      "https://tailscale.com/docs/features/tags",
 		Pass:        true,
 	}
 
@@ -510,12 +512,9 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 	var staleDevices []string
 
 	for _, dev := range devices {
-		if dev.LastSeen == "" {
-			continue
-		}
-
-		lastSeen, err := time.Parse(time.RFC3339, dev.LastSeen)
-		if err != nil {
+		lastSeen, ok := dev.LastSeenTime()
+		if !ok {
+			// The API omits lastSeen for devices currently connected to control.
 			continue
 		}
 
@@ -533,17 +532,14 @@ func (d *DeviceAuditor) checkStaleDevices(devices []*client.Device) types.Sugges
 		// Build fixable items
 		var fixableItems []types.FixableItem
 		for _, dev := range devices {
-			if dev.LastSeen == "" {
-				continue
-			}
-			lastSeen, err := time.Parse(time.RFC3339, dev.LastSeen)
-			if err != nil {
+			lastSeen, ok := dev.LastSeenTime()
+			if !ok {
 				continue
 			}
 			if lastSeen.Before(staleThreshold) {
 				daysSince := int(time.Since(lastSeen).Hours() / 24)
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s - last seen %d days ago", dev.Hostname, daysSince),
 				})
@@ -569,7 +565,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 		Category:    types.DeviceSecurity,
 		Description: "Devices pending authorization cannot access the tailnet but may indicate attempted unauthorized access.",
 		Remediation: "Review and authorize legitimate devices. Investigate unknown device attempts.",
-		Source:      "https://tailscale.com/kb/1099/device-authorization",
+		Source:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 		Pass:        true,
 	}
 
@@ -590,7 +586,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 		for _, dev := range devices {
 			if !dev.Authorized {
 				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          dev.DeviceID,
+					ID:          dev.ID,
 					Name:        dev.Name,
 					Description: fmt.Sprintf("%s - user: %s", dev.Hostname, dev.User),
 				})
@@ -601,7 +597,7 @@ func (d *DeviceAuditor) checkUnauthorizedDevices(devices []*client.Device) types
 			Type:        types.FixTypeAPI,
 			Description: "Authorize pending devices via API",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1099/device-authorization",
+			DocURL:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 			Items:       fixableItems,
 			AutoFixSafe: false, // Requires review before authorizing
 		}
@@ -618,7 +614,7 @@ func (d *DeviceAuditor) checkExternalDevices(devices []*client.Device) types.Sug
 		Category:    types.DeviceSecurity,
 		Description: "External devices are shared from other tailnets. Ensure these are expected.",
 		Remediation: "Review external devices and verify they should have access. Remove any unexpected shared devices.",
-		Source:      "https://tailscale.com/kb/1084/sharing",
+		Source:      "https://tailscale.com/docs/features/sharing",
 		Pass:        true,
 	}
 
@@ -637,7 +633,7 @@ func (d *DeviceAuditor) checkExternalDevices(devices []*client.Device) types.Sug
 			Type:        types.FixTypeManual,
 			Description: "Review and manage external shared devices",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1084/sharing",
+			DocURL:      "https://tailscale.com/docs/features/sharing",
 		}
 	}
 
@@ -652,7 +648,7 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device, dns
 		Category:    types.DeviceSecurity,
 		Description: "Machine names are published to Certificate Transparency logs when HTTPS is enabled. Sensitive information in names is publicly exposed.",
 		Remediation: "Rename devices to remove sensitive information before enabling HTTPS. Use generic names. Consider randomized tailnet DNS name.",
-		Source:      "https://tailscale.com/kb/1153/enabling-https",
+		Source:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		Pass:        true,
 	}
 
@@ -694,7 +690,7 @@ func (d *DeviceAuditor) checkSensitiveMachineNames(devices []*client.Device, dns
 			Type:        types.FixTypeManual,
 			Description: "Rename devices to remove sensitive information",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1153/enabling-https",
+			DocURL:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		}
 	}
 
@@ -739,7 +735,7 @@ func isDevDevice(dev *client.Device) bool {
 	return false
 }
 
-func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Suggestion {
+func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-008",
 		Title:       "Devices with long key expiry periods",
@@ -747,7 +743,7 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 		Category:    types.DeviceSecurity,
 		Description: "Default key expiry is 180 days. Dev devices (laptops, phones) should use shorter; servers can use up to 180 days.",
 		Remediation: "Customize node key expiry: shorter for dev devices, up to 180 days for servers. Shorter periods require more frequent re-authentication.",
-		Source:      "https://tailscale.com/kb/1196/security-hardening",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
 		Pass:        true,
 	}
 
@@ -755,6 +751,13 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 		devDeviceMaxDays = 90  // Dev devices should expire within
 		serverMaxDays    = 180 // Servers can have up to
 	)
+
+	// The tailnet-wide key duration is the ceiling every device inherits, so
+	// report it alongside the per-device findings.
+	var settingNote string
+	if settings := tc.settings(); settings != nil && settings.DevicesKeyDurationDays > 0 {
+		settingNote = fmt.Sprintf("Tailnet key expiry duration: %d days (devicesKeyDurationDays).", settings.DevicesKeyDurationDays)
+	}
 
 	var devDeviceLongExpiry []string
 	var serverLongExpiry []string
@@ -765,16 +768,11 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 			continue // Already flagged in DEV-001
 		}
 
-		if dev.Expires == "" {
+		if dev.Expires.IsZero() {
 			continue
 		}
 
-		expires, err := time.Parse(time.RFC3339, dev.Expires)
-		if err != nil {
-			continue
-		}
-
-		daysUntilExpiry := int(expires.Sub(now).Hours() / 24)
+		daysUntilExpiry := int(dev.Expires.Sub(now).Hours() / 24)
 
 		if isDevDevice(dev) {
 			if daysUntilExpiry > devDeviceMaxDays {
@@ -792,8 +790,11 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 	}
 
 	var allLongExpiry []string
+	if settingNote != "" {
+		allLongExpiry = append(allLongExpiry, settingNote, "")
+	}
 	if len(devDeviceLongExpiry) > 0 {
-		allLongExpiry = append(allLongExpiry, "Dev devices (should be longer :")
+		allLongExpiry = append(allLongExpiry, fmt.Sprintf("End-user devices expiring in more than %d days:", devDeviceMaxDays))
 		allLongExpiry = append(allLongExpiry, devDeviceLongExpiry...)
 	}
 	if len(serverLongExpiry) > 0 {
@@ -822,59 +823,208 @@ func (d *DeviceAuditor) checkLongKeyExpiry(devices []*client.Device) types.Sugge
 			Type:        types.FixTypeManual,
 			Description: "Adjust key expiry periods: shorter for dev devices, longer for servers",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1196/security-hardening",
+			DocURL:      "https://tailscale.com/docs/reference/best-practices/security",
 		}
 	}
 
 	return finding
 }
 
-func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device) types.Suggestion {
+func (d *DeviceAuditor) checkDeviceApproval(devices []*client.Device, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-009",
 		Title:       "Device approval configuration",
 		Severity:    types.Medium,
 		Category:    types.DeviceSecurity,
-		Description: "Device approval requires admin review before new devices can access the tailnet. This is a key security control.",
-		Remediation: "Enable device approval in Device management console. Review and approve only trusted, workplace-managed devices.",
-		Source:      "https://tailscale.com/kb/1099/device-authorization",
+		Description: "Device approval requires an admin to review each new device before it can reach the tailnet.",
+		Remediation: "Enable device approval in Device management. Approve only trusted, managed devices.",
+		Source:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
 		Pass:        true,
 	}
 
-	// Count unauthorized vs authorized devices to infer if device approval is enabled
-	authorized := 0
-	unauthorized := 0
+	fix := &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Enable device approval in Device management settings",
+		AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
+		DocURL:      "https://tailscale.com/docs/features/access-control/device-management/device-approval",
+	}
+
+	settings := tc.settings()
+	if settings == nil {
+		// Fall back to the shape of the device list. This is a weak signal:
+		// with approval disabled every device is authorized on join, so an
+		// all-authorized fleet is consistent with approval being off.
+		var unauthorized int
+		for _, dev := range devices {
+			if !dev.Authorized {
+				unauthorized++
+			}
+		}
+
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = "Could not read the device approval setting."
+		details := unavailable("tailnet settings (needs the feature_settings:read scope)", errOf(tc, func(tc *TailnetContext) error { return tc.SettingsErr }))
+		if unauthorized > 0 {
+			details = append(details, fmt.Sprintf("%d device(s) are pending authorization, which implies device approval is enabled.", unauthorized))
+		}
+		finding.Details = details
+		finding.Fix = fix
+		return finding
+	}
+
+	authorized, pending := 0, 0
 	for _, dev := range devices {
 		if dev.Authorized {
 			authorized++
 		} else {
-			unauthorized++
+			pending++
 		}
 	}
 
-	// If all devices are authorized and there are many devices, device approval might not be enabled
-	// This is a heuristic - we can't directly check the setting via API
-	if unauthorized == 0 && authorized > 5 {
+	if !settings.DevicesApprovalOn {
 		finding.Pass = false
-		finding.Severity = types.Informational
-		finding.Description = fmt.Sprintf("All %d devices are authorized. Verify device approval is enabled in admin console - if not, new devices join automatically without review.", authorized)
-		finding.Details = "MANUAL CHECK REQUIRED: Verify device approval is enabled in Device management settings."
-		finding.Fix = &types.FixInfo{
-			Type:        types.FixTypeManual,
-			Description: "Enable device approval in Device management settings",
-			AdminURL:    "https://login.tailscale.com/admin/settings/device-management",
-			DocURL:      "https://tailscale.com/kb/1099/device-authorization",
-		}
-	} else if unauthorized > 0 {
-		// Device approval is working - there are pending devices
-		finding.Pass = true
-		finding.Description = fmt.Sprintf("Device approval appears active: %d authorized, %d pending approval.", authorized, unauthorized)
+		finding.Description = fmt.Sprintf("Device approval is disabled. Any device with a valid credential joins %d existing device(s) without review.", authorized)
+		finding.Details = "Confirmed via the Tailscale API (devicesApprovalOn is false)."
+		finding.Fix = fix
+		return finding
 	}
 
+	finding.Description = fmt.Sprintf("Device approval is enabled: %d authorized device(s), %d pending approval.", authorized, pending)
+	finding.Details = "Confirmed via the Tailscale API (devicesApprovalOn is true)."
+	if pending > 0 {
+		// The pending devices themselves are enumerated by DEV-005.
+		finding.Details = fmt.Sprintf("Confirmed via the Tailscale API. %d device(s) await approval; see DEV-005.", pending)
+	}
 	return finding
 }
 
-func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
+// errOf reads an error field from a possibly-nil TailnetContext.
+func errOf(tc *TailnetContext, get func(*TailnetContext) error) error {
+	if tc == nil {
+		return errors.New("tailnet context was not fetched")
+	}
+	return get(tc)
+}
+
+// checkDuplicateNodeKeys reports devices the API says are connected more than
+// once with the same node key.
+func (d *DeviceAuditor) checkDuplicateNodeKeys(devices []*client.Device) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "DEV-015",
+		Title:       "Node key used by multiple connections",
+		Severity:    types.High,
+		Category:    types.DeviceSecurity,
+		Description: "Tailscale reports when several machines are connected using one device's node key, which usually means node state was copied off the original machine.",
+		Remediation: "Investigate the device. If the state was copied without authorization, remove the device, rotate any credentials it held, and re-enroll the legitimate machine.",
+		Source:      "https://tailscale.com/docs/reference/best-practices/security",
+		Pass:        true,
+	}
+
+	var shared []string
+	var fixableItems []types.FixableItem
+	for _, dev := range devices {
+		if !dev.MultipleConnections {
+			continue
+		}
+		shared = append(shared, fmt.Sprintf("%s (%s) - user: %s", dev.Name, dev.Hostname, dev.User))
+		fixableItems = append(fixableItems, types.FixableItem{
+			ID:          dev.ID,
+			Name:        dev.Name,
+			Description: fmt.Sprintf("%s - node key in use by more than one connection", dev.Hostname),
+		})
+	}
+
+	if len(shared) == 0 {
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Details = append([]string{
+		"The API only reports this while the concurrent connections are live, so an",
+		"attacker who avoids overlapping with the legitimate node will not show up here.",
+		"",
+	}, shared...)
+	finding.Description = fmt.Sprintf("Found %d device(s) whose node key is in use by more than one connection.", len(shared))
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeAPI,
+		Description: "Remove the affected devices after confirming which machine is legitimate",
+		AdminURL:    "https://login.tailscale.com/admin/machines",
+		DocURL:      "https://tailscale.com/docs/reference/best-practices/security",
+		Items:       fixableItems,
+		AutoFixSafe: false, // Removing the wrong machine drops legitimate access.
+	}
+	return finding
+}
+
+// tailnetLockStatus is the subset of `tailscale lock status --json` this tool
+// consumes. Field names match the JSON emitted by the CLI, which serializes
+// ipnstate.NetworkLockStatus without struct tags.
+type tailnetLockStatus struct {
+	Enabled       bool
+	NodeKeySigned bool
+	TrustedKeys   []struct {
+		Key string
+	}
+	FilteredPeers []struct {
+		Name         string
+		StableID     string
+		TailscaleIPs []string
+	}
+}
+
+// readTailnetLockStatus asks the local tailscaled for tailnet lock state.
+//
+// The JSON form is used deliberately: the human-readable output prints
+// "Tailnet lock is NOT enabled." for the disabled case, which any substring
+// test for "enabled" matches, and `tailscale lock status` exits 0 either way.
+func readTailnetLockStatus(ctx context.Context) (*tailnetLockStatus, error) {
+	tsBinary, err := findTailscaleBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status", "--json")
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+
+	return parseTailnetLockStatus(output)
+}
+
+// parseTailnetLockStatus decodes the JSON emitted by `tailscale lock status --json`.
+func parseTailnetLockStatus(output []byte) (*tailnetLockStatus, error) {
+	var status tailnetLockStatus
+	if err := json.Unmarshal(output, &status); err != nil {
+		return nil, fmt.Errorf("could not parse 'tailscale lock status --json' output: %w", err)
+	}
+	return &status, nil
+}
+
+// lockedOutDevices returns devices the API reports as having a tailnet lock
+// signature problem. tailnetLockError is only populated when tailnet lock is
+// enabled, so a non-empty value also proves lock is on for the audited tailnet.
+func lockedOutDevices(devices []*client.Device) []*client.Device {
+	var out []*client.Device
+	for _, dev := range devices {
+		if strings.TrimSpace(dev.TailnetLockError) != "" {
+			out = append(out, dev)
+		}
+	}
+	return out
+}
+
+// localCheckNote explains that the CLI reads the local machine's daemon, which
+// may not be joined to the tailnet being audited.
+const localCheckNote = "NOTE: 'tailscale lock status' reads the LOCAL machine's daemon. " +
+	"If you are auditing a different tailnet via --tailnet, verify lock status on that tailnet directly."
+
+func (d *DeviceAuditor) checkTailnetLock(ctx context.Context, devices []*client.Device) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-010",
 		Title:       "Tailnet Lock not enabled",
@@ -882,168 +1032,81 @@ func (d *DeviceAuditor) checkTailnetLock(ctx context.Context) types.Suggestion {
 		Category:    types.DeviceSecurity,
 		Description: "Tailnet Lock (network lock) prevents attackers from adding devices even with stolen auth keys. Requires cryptographic signing from trusted nodes.",
 		Remediation: "Enable Tailnet Lock to require device signing. Run: tailscale lock init",
-		Source:      "https://tailscale.com/kb/1226/tailnet-lock",
+		Source:      "https://tailscale.com/docs/features/tailnet-lock",
 		Pass:        true,
 	}
 
-	// Find tailscale binary using secure path resolution
-	tsBinary, err := findTailscaleBinary()
+	// A device carrying a tailnet lock error proves lock is enabled on the
+	// tailnet being audited, without depending on the local daemon.
+	if locked := lockedOutDevices(devices); len(locked) > 0 {
+		finding.Pass = true
+		finding.Description = fmt.Sprintf("Tailnet Lock is enabled: %d device(s) report a tailnet lock signature state, which the API only returns when lock is active.", len(locked))
+		finding.Details = []string{"Confirmed via the Tailscale API (device tailnetLockError field).", "See DEV-012 for the devices awaiting a signature."}
+		return finding
+	}
+
+	status, err := readTailnetLockStatus(ctx)
 	if err != nil {
 		finding.Pass = false
 		finding.Severity = types.Informational
-		finding.Description = "Cannot check Tailnet Lock status: " + err.Error()
+		finding.Description = "Could not determine Tailnet Lock status: " + err.Error()
 		finding.Details = []string{
-			"The tailscale CLI binary could not be located securely.",
+			"Tailnet Lock state is not exposed by the Tailscale API, so this check needs the local tailscale CLI.",
 			"",
-			"NOTE: This check runs on the LOCAL machine and may not reflect",
-			"the status of the tailnet being audited via --tailnet flag.",
-			"",
-			"To check Tailnet Lock status manually:",
+			"To check manually:",
 			"  1. Install Tailscale CLI: https://tailscale.com/download",
 			"  2. Run: tailscale lock status",
 			"",
-			"See: https://tailscale.com/kb/1226/tailnet-lock",
+			"Use --tailscale-path to point at a CLI in a non-standard location.",
+			"",
+			localCheckNote,
 		}
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
-			Description: "Install tailscale CLI and run 'tailscale lock init'",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+			Description: "Install the tailscale CLI, then run 'tailscale lock status'",
+			DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 		}
 		return finding
 	}
 
-	// Try to run tailscale lock status
-	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		// Check if it's a "command not found" error
-		if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
-			finding.Pass = false
-			finding.Severity = types.Informational
-			finding.Description = "Cannot check Tailnet Lock status: tailscale CLI not found."
-			finding.Details = []string{
-				"The tailscale CLI binary was not found in PATH.",
-				"",
-				"To check Tailnet Lock status manually:",
-				"  1. Install Tailscale CLI: https://tailscale.com/download",
-				"  2. Run: tailscale lock status",
-				"",
-				"To enable Tailnet Lock:",
-				"  1. Ensure tailscale CLI is installed on a trusted node",
-				"  2. Run: tailscale lock init",
-				"  3. Add signing keys from other trusted nodes",
-				"",
-				"See: https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			finding.Fix = &types.FixInfo{
-				Type:        types.FixTypeExternal,
-				Description: "Install tailscale CLI and run 'tailscale lock init'",
-				DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			return finding
-		}
-
-		// Check for exit status indicating lock is not enabled
-		outputStr := string(output)
-
-		// "tailscale lock status" returns exit code 1 with specific message when not enabled
-		if strings.Contains(outputStr, "disabled") ||
-			strings.Contains(outputStr, "not enabled") ||
-			strings.Contains(outputStr, "Tailnet lock is NOT enabled") {
-			finding.Pass = false
-			finding.Description = "Tailnet Lock is not enabled. Attackers with stolen auth keys can add unauthorized devices."
-			finding.Details = []string{
-				"Tailnet Lock prevents unauthorized device additions even if auth keys are compromised.",
-				"",
-				"Current status: DISABLED",
-				"",
-				"To enable Tailnet Lock:",
-				"  1. On a trusted node, run: tailscale lock init",
-				"  2. This generates a signing key for that node",
-				"  3. Add signing keys from additional trusted nodes: tailscale lock add <nodekey>",
-				"  4. Once enabled, new devices require signatures from existing trusted nodes",
-				"",
-				"WARNING: Enabling Tailnet Lock is a significant security change.",
-				"Ensure you understand the key rotation and recovery procedures.",
-			}
-			finding.Fix = &types.FixInfo{
-				Type:        types.FixTypeExternal,
-				Description: "Enable Tailnet Lock by running 'tailscale lock init' on a trusted node",
-				DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
-			}
-			return finding
-		}
-
-		// Other errors - connection issues, permission denied, etc.
+	if !status.Enabled {
 		finding.Pass = false
-		finding.Severity = types.Informational
-		finding.Description = "Cannot determine Tailnet Lock status due to an error."
+		finding.Description = "Tailnet Lock is not enabled. Attackers with stolen auth keys can add unauthorized devices."
 		finding.Details = []string{
-			fmt.Sprintf("Error running 'tailscale lock status': %v", err),
-			fmt.Sprintf("Output: %s", strings.TrimSpace(outputStr)),
+			"Current status: DISABLED",
 			"",
-			"Possible causes:",
-			"  - Tailscale daemon not running (start with: sudo tailscaled)",
-			"  - Insufficient permissions (try running as root/admin)",
-			"  - Network connectivity issues",
+			"To enable Tailnet Lock:",
+			"  1. On a trusted node, run: tailscale lock init",
+			"  2. Add signing keys from additional trusted nodes: tailscale lock add <tlpub-key>",
+			"  3. Once enabled, new devices require signatures from existing trusted nodes",
 			"",
-			"To check manually, run: tailscale lock status",
+			"WARNING: Enabling Tailnet Lock is a significant security change.",
+			"Ensure you understand the key rotation and recovery procedures first.",
+			"",
+			localCheckNote,
 		}
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeExternal,
-			Description: "Verify tailscale daemon is running and check 'tailscale lock status'",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+			Description: "Enable Tailnet Lock by running 'tailscale lock init' on a trusted node",
+			DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 		}
 		return finding
 	}
 
-	// Command succeeded - parse output
-	outputStr := string(output)
-
-	// Check if lock is enabled
-	if strings.Contains(outputStr, "enabled") ||
-		strings.Contains(outputStr, "Tailnet lock is enabled") {
-		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled (local check). Devices require cryptographic signing from trusted nodes."
-
-		// Extract some useful info if available
-		var details []string
-		details = append(details, "Status: ENABLED (checked via local tailscale CLI)")
-		details = append(details, "")
-		details = append(details, "NOTE: This check runs on the LOCAL machine. If auditing a remote")
-		details = append(details, "tailnet via --tailnet, verify lock status on that tailnet directly.")
-
-		// Try to extract key count or other info
-		lines := strings.Split(outputStr, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "key") || strings.Contains(line, "signing") {
-				details = append(details, line)
-			}
-		}
-
-		if len(details) > 1 {
-			finding.Details = details
-		}
-		return finding
-	}
-
-	// Output doesn't clearly indicate enabled/disabled - report what we got
-	finding.Pass = false
-	finding.Severity = types.Informational
-	finding.Description = "Tailnet Lock status unclear. Manual verification recommended."
+	finding.Pass = true
+	finding.Description = fmt.Sprintf("Tailnet Lock is enabled with %d trusted signing key(s). Devices require cryptographic signing from trusted nodes.", len(status.TrustedKeys))
 	finding.Details = []string{
-		"Output from 'tailscale lock status':",
-		strings.TrimSpace(outputStr),
+		"Status: ENABLED",
+		fmt.Sprintf("Trusted signing keys: %d", len(status.TrustedKeys)),
 		"",
-		"Please verify Tailnet Lock status manually.",
-		"To enable: tailscale lock init",
+		localCheckNote,
 	}
-	finding.Fix = &types.FixInfo{
-		Type:        types.FixTypeExternal,
-		Description: "Verify Tailnet Lock status and enable if needed",
-		DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+	if len(status.TrustedKeys) < 2 {
+		finding.Pass = false
+		finding.Severity = types.Medium
+		finding.Title = "Tailnet Lock has a single signing key"
+		finding.Description = "Tailnet Lock is enabled but only one trusted signing key exists. Losing that key locks the tailnet out of adding devices."
+		finding.Remediation = "Add signing keys from at least one additional trusted node: tailscale lock add <tlpub-key>"
 	}
 
 	return finding
@@ -1057,7 +1120,7 @@ func (d *DeviceAuditor) checkUniqueUsers(devices []*client.Device) types.Suggest
 		Category:    types.DeviceSecurity,
 		Description: "Summary of unique users who own devices in the tailnet. Review user list for unexpected or departed users.",
 		Remediation: "Periodically audit the user list. Remove access for departed employees. Verify external users should have access.",
-		Source:      "https://tailscale.com/kb/1184/deprovisioning",
+		Source:      "https://tailscale.com/docs/features/sharing/how-to/offboard",
 		Pass:        true,
 	}
 
@@ -1094,14 +1157,14 @@ func (d *DeviceAuditor) checkUniqueUsers(devices []*client.Device) types.Suggest
 			Type:        types.FixTypeManual,
 			Description: "Review users with many devices",
 			AdminURL:    "https://login.tailscale.com/admin/users",
-			DocURL:      "https://tailscale.com/kb/1184/deprovisioning",
+			DocURL:      "https://tailscale.com/docs/features/sharing/how-to/offboard",
 		}
 	}
 
 	return finding
 }
 
-func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Suggestion {
+func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context, devices []*client.Device) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "DEV-012",
 		Title:       "Nodes awaiting Tailnet Lock signature",
@@ -1109,87 +1172,65 @@ func (d *DeviceAuditor) checkTailnetLockPending(ctx context.Context) types.Sugge
 		Category:    types.DeviceSecurity,
 		Description: "With Tailnet Lock enabled, new nodes require signatures from trusted signing keys before they can connect.",
 		Remediation: "Review pending nodes and sign legitimate ones. Investigate unexpected signing requests.",
-		Source:      "https://tailscale.com/kb/1226/tailnet-lock",
+		Source:      "https://tailscale.com/docs/features/tailnet-lock",
 		Pass:        true,
 	}
 
-	// Find tailscale binary using secure path resolution
-	tsBinary, err := findTailscaleBinary()
-	if err != nil {
-		// Can't find binary, skip this check
-		finding.Pass = true
-		finding.Description = "Tailnet Lock pending check skipped (CLI unavailable)."
-		finding.Details = []string{
-			"This check only applies when Tailnet Lock is enabled.",
-			"NOTE: This check runs on the LOCAL machine.",
-		}
-		return finding
+	// The API reports per-device lock signature problems, which reflects the
+	// tailnet actually being audited rather than the local machine's tailnet.
+	var pending []string
+	seen := make(map[string]bool)
+	for _, dev := range lockedOutDevices(devices) {
+		seen[dev.Name] = true
+		pending = append(pending, fmt.Sprintf("%s (%s): %s", dev.Name, dev.Hostname, strings.TrimSpace(dev.TailnetLockError)))
 	}
 
-	// Try to run tailscale lock status for detailed info
-	cmd := exec.CommandContext(ctx, tsBinary, "lock", "status")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		// If lock is not enabled or command fails, skip this check
-		finding.Pass = true
-		finding.Description = "Tailnet Lock status check skipped (lock not enabled or CLI unavailable)."
-		finding.Details = "This check only applies when Tailnet Lock is enabled."
-		return finding
-	}
-
-	outputStr := string(output)
-
-	// Check if there are pending signatures
-	if strings.Contains(outputStr, "awaiting") ||
-		strings.Contains(outputStr, "pending") ||
-		strings.Contains(outputStr, "needs signature") {
-
-		finding.Pass = false
-		finding.Description = "There are nodes awaiting Tailnet Lock signatures. Review and sign legitimate nodes."
-
-		// Extract relevant lines
-		var pendingLines []string
-		lines := strings.Split(outputStr, "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "await") || strings.Contains(line, "pending") || strings.Contains(line, "needs") {
-				pendingLines = append(pendingLines, line)
-			}
-		}
-
-		if len(pendingLines) > 0 {
-			finding.Details = pendingLines
-		} else {
+	// Supplement with the local daemon's view, which also knows whether this
+	// node itself is awaiting a signature.
+	status, err := readTailnetLockStatus(ctx)
+	switch {
+	case err != nil:
+		if len(pending) == 0 {
+			finding.Pass = true
+			finding.Description = "No devices report a Tailnet Lock signature problem."
 			finding.Details = []string{
-				"Nodes are awaiting signatures.",
-				"Run 'tailscale lock status' for details.",
-				"Sign with: tailscale lock sign <nodekey>",
+				fmt.Sprintf("The local tailscale CLI was not consulted: %v", err),
+				"Devices locked out by tailnet lock would still be reported by the API.",
 			}
+			return finding
 		}
-
-		finding.Fix = &types.FixInfo{
-			Type:        types.FixTypeExternal,
-			Description: "Review pending nodes with 'tailscale lock status' and sign legitimate ones",
-			DocURL:      "https://tailscale.com/kb/1226/tailnet-lock",
+	case !status.Enabled:
+		if len(pending) == 0 {
+			finding.Pass = true
+			finding.Description = "Tailnet Lock is not enabled, so no nodes are awaiting signatures."
+			finding.Details = []string{localCheckNote}
+			return finding
 		}
-		return finding
+	default:
+		for _, peer := range status.FilteredPeers {
+			if seen[peer.Name] {
+				continue
+			}
+			pending = append(pending, fmt.Sprintf("%s (%s): locked out by tailnet lock", peer.Name, strings.Join(peer.TailscaleIPs, ",")))
+		}
+		if !status.NodeKeySigned {
+			pending = append(pending, "this machine: its own node key is not signed, so it is locked out")
+		}
 	}
 
-	// Check if lock is enabled but no pending nodes
-	if strings.Contains(outputStr, "enabled") {
+	if len(pending) == 0 {
 		finding.Pass = true
-		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures (local check)."
-		finding.Details = "NOTE: This check runs on the LOCAL machine. If auditing a remote tailnet, verify directly."
+		finding.Description = "Tailnet Lock is enabled with no nodes awaiting signatures."
 		return finding
 	}
 
-	// Lock not enabled - skip this check
-	finding.Pass = true
-	finding.Description = "Tailnet Lock is not enabled. Enable it to require device signing."
-	finding.Details = []string{
-		"This check only reports pending signatures when Tailnet Lock is active.",
-		"NOTE: This check runs on the LOCAL machine.",
+	finding.Pass = false
+	finding.Details = pending
+	finding.Description = fmt.Sprintf("Found %d node(s) with an unresolved Tailnet Lock signature. Review and sign legitimate nodes.", len(pending))
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeExternal,
+		Description: "Review with 'tailscale lock status' and sign legitimate nodes: tailscale lock sign <nodekey>",
+		DocURL:      "https://tailscale.com/docs/features/tailnet-lock",
 	}
 	return finding
 }
@@ -1202,7 +1243,7 @@ func (d *DeviceAuditor) checkUserDevicesKeyExpiryDisabled(devices []*client.Devi
 		Category:    types.DeviceSecurity,
 		Description: "User devices with key expiry disabled never require re-authentication, which may be a compliance concern.",
 		Remediation: "Review devices with disabled key expiry. Re-enable expiry unless there's a specific operational need.",
-		Source:      "https://tailscale.com/kb/1028/key-expiry",
+		Source:      "https://tailscale.com/docs/features/access-control/key-expiry",
 		Pass:        true,
 	}
 
@@ -1232,7 +1273,7 @@ func (d *DeviceAuditor) checkUserDevicesKeyExpiryDisabled(devices []*client.Devi
 			Type:        types.FixTypeManual,
 			Description: "Review and re-enable key expiry for user devices in admin console",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1028/key-expiry",
+			DocURL:      "https://tailscale.com/docs/features/access-control/key-expiry",
 		}
 	}
 

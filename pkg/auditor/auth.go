@@ -22,6 +22,7 @@ func NewAuthAuditor(c *client.Client) *AuthAuditor {
 // keyInfo holds parsed auth key information for auditing
 type keyInfo struct {
 	ID            string
+	Description   string
 	Reusable      bool
 	Preauthorized bool
 	Ephemeral     bool
@@ -31,56 +32,57 @@ type keyInfo struct {
 	Expires       time.Time
 }
 
+// newKeyInfo projects an API key into the fields the auth checks care about.
+func newKeyInfo(key client.Key) keyInfo {
+	info := keyInfo{
+		ID:            key.ID,
+		Description:   key.Description,
+		Created:       key.Created,
+		Expires:       key.Expires,
+		Reusable:      key.Capabilities.Devices.Create.Reusable,
+		Preauthorized: key.Capabilities.Devices.Create.Preauthorized,
+		Ephemeral:     key.Capabilities.Devices.Create.Ephemeral,
+		Tags:          key.Capabilities.Devices.Create.Tags,
+	}
+	if !key.Expires.IsZero() {
+		info.DaysToExpiry = int(time.Until(key.Expires).Hours() / 24)
+	}
+	return info
+}
+
+// label returns a human-readable identifier for a key, preferring its
+// description over the opaque key ID.
+func (k keyInfo) label() string {
+	if k.Description != "" {
+		return fmt.Sprintf("%s (%s)", k.Description, k.ID)
+	}
+	return k.ID
+}
+
 // Audit performs authentication-related security checks
 func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
-	// Get all auth keys
-	keyIDs, err := a.client.GetKeys(ctx)
+	// Get the tailnet's machine auth keys. The keys endpoint also returns API
+	// access tokens, OAuth clients and federated identities, which have no
+	// device-creation capabilities; GetAuthKeys filters those out.
+	apiKeys, err := a.client.GetAuthKeys(ctx)
 	if err != nil {
-		// Auth keys might not be accessible with all API keys
+		// Auth keys might not be accessible with all credentials
 		findings = append(findings, types.Suggestion{
 			ID:          "AUTH-ERR",
 			Title:       "Could not retrieve auth keys",
 			Severity:    types.Informational,
 			Category:    types.Authentication,
-			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. This may require additional API permissions.", err),
+			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. This may require the auth_keys:read scope.", err),
 			Pass:        true,
 		})
 		return findings, nil
 	}
 
-	var keys []keyInfo
-	for _, id := range keyIDs {
-		key, err := a.client.GetKey(ctx, id)
-		if err != nil {
-			continue // Skip keys we can't fetch
-		}
-
-		info := keyInfo{
-			ID:      key.ID,
-			Created: key.Created,
-			Expires: key.Expires,
-		}
-
-		// Calculate days to expiry
-		if !key.Expires.IsZero() {
-			info.DaysToExpiry = int(time.Until(key.Expires).Hours() / 24)
-		}
-
-		// Extract capabilities
-		if key.Capabilities.Devices.Create.Reusable {
-			info.Reusable = true
-		}
-		if key.Capabilities.Devices.Create.Preauthorized {
-			info.Preauthorized = true
-		}
-		if key.Capabilities.Devices.Create.Ephemeral {
-			info.Ephemeral = true
-		}
-		info.Tags = key.Capabilities.Devices.Create.Tags
-
-		keys = append(keys, info)
+	keys := make([]keyInfo, 0, len(apiKeys))
+	for _, key := range apiKeys {
+		keys = append(keys, newKeyInfo(key))
 	}
 
 	// AUTH-001: Check for reusable auth keys
@@ -106,7 +108,7 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "Reusable auth keys are dangerous if stolen - they allow unlimited unauthorized device additions until expiry.",
 		Remediation: "Store reusable keys in a secrets manager. Prefer one-off keys for single device provisioning. Review and delete unnecessary reusable keys.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -118,10 +120,10 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				desc += fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			reusableKeys = append(reusableKeys, fmt.Sprintf("Key %s (expires in %d days)", key.ID, key.DaysToExpiry))
+			reusableKeys = append(reusableKeys, fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry))
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
-				Name:        key.ID,
+				Name:        key.label(),
 				Description: desc,
 			})
 		}
@@ -149,9 +151,9 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 		Title:       "Auth keys with long expiry period",
 		Severity:    types.High,
 		Category:    types.Authentication,
-		Description: "Auth keys with expiry periods longer than 90 days increase the exposure window if compromised.",
-		Remediation: "Use shorter expiry periods for auth keys. The maximum is 90 days, but shorter periods reduce risk.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Description: "Auth keys valid for more than 90 days widen the window in which a leaked key can be used.",
+		Remediation: "Set a shorter expirySeconds when creating auth keys. 90 days is the API default, not a ceiling: keys created through the API can outlive it, so a long-lived key is a deliberate choice worth revisiting.",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -159,10 +161,10 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	var fixableItems []types.FixableItem
 	for _, key := range keys {
 		if key.DaysToExpiry > 90 {
-			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("Key %s: %d days until expiry", key.ID, key.DaysToExpiry))
+			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry))
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
-				Name:        key.ID,
+				Name:        key.label(),
 				Description: fmt.Sprintf("Expires in %d days", key.DaysToExpiry),
 			})
 		}
@@ -171,7 +173,7 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	if len(longExpiryKeys) > 0 {
 		finding.Pass = false
 		finding.Details = longExpiryKeys
-		finding.Description = fmt.Sprintf("Found %d auth key(s) with >90 days until expiry.", len(longExpiryKeys))
+		finding.Description = fmt.Sprintf("Found %d auth key(s) with more than 90 days until expiry.", len(longExpiryKeys))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeAPI,
 			Description: "Delete long-expiry keys and recreate with shorter expiry",
@@ -192,7 +194,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "Pre-authorized keys allow devices to join without admin approval, bypassing device approval controls.",
 		Remediation: "Restrict pre-authorized keys to essential automation use cases. Use webhooks to alert on new device additions.",
-		Source:      "https://tailscale.com/kb/1085/auth-keys",
+		Source:      "https://tailscale.com/docs/features/access-control/auth-keys",
 		Pass:        true,
 	}
 
@@ -203,7 +205,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				tagInfo = fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("Key %s (expires in %d days%s)", key.ID, key.DaysToExpiry, tagInfo))
+			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo))
 		}
 	}
 
@@ -222,7 +224,7 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 				}
 				fixableItems = append(fixableItems, types.FixableItem{
 					ID:          key.ID,
-					Name:        key.ID,
+					Name:        key.label(),
 					Description: desc,
 				})
 			}
@@ -247,7 +249,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 		Category:    types.Authentication,
 		Description: "For CI/CD and temporary workloads, ephemeral keys are recommended as nodes are auto-removed after inactivity.",
 		Remediation: "Use ephemeral keys for CI/CD pipelines. Add `tailscale logout` to scripts for immediate removal. Use --state=mem: flag.",
-		Source:      "https://tailscale.com/kb/1111/ephemeral-nodes",
+		Source:      "https://tailscale.com/docs/features/ephemeral-nodes",
 		Pass:        true,
 	}
 
@@ -255,7 +257,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 	var nonEphemeralReusable []string
 	for _, key := range keys {
 		if key.Reusable && !key.Ephemeral {
-			nonEphemeralReusable = append(nonEphemeralReusable, fmt.Sprintf("Key %s: reusable but not ephemeral", key.ID))
+			nonEphemeralReusable = append(nonEphemeralReusable, fmt.Sprintf("%s: reusable but not ephemeral", key.label()))
 		}
 	}
 
@@ -274,7 +276,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 				}
 				fixableItems = append(fixableItems, types.FixableItem{
 					ID:          key.ID,
-					Name:        key.ID,
+					Name:        key.label(),
 					Description: desc,
 				})
 			}
@@ -284,7 +286,7 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 			Type:        types.FixTypeAPI,
 			Description: "Create ephemeral replacement keys (7-day expiry) and delete old keys",
 			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
-			DocURL:      "https://tailscale.com/kb/1111/ephemeral-nodes",
+			DocURL:      "https://tailscale.com/docs/features/ephemeral-nodes",
 			Items:       fixableItems,
 			AutoFixSafe: false, // User should verify CI/CD usage before replacing
 		}

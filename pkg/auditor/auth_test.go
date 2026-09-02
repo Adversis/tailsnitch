@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adversis/tailsnitch/pkg/client"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
@@ -276,5 +277,42 @@ func TestKeyInfoDaysToExpiry(t *testing.T) {
 				t.Errorf("DaysToExpiry = %d, want ~%d", daysToExpiry, tt.wantApprox)
 			}
 		})
+	}
+}
+
+func TestKeyInfoLabelPrefersDescription(t *testing.T) {
+	// The keys endpoint returns a description, so findings can name a key by
+	// what it is for rather than by its opaque ID.
+	withDesc := keyInfo{ID: "kABC123", Description: "ci-runner"}
+	if got, want := withDesc.label(), "ci-runner (kABC123)"; got != want {
+		t.Errorf("label() = %q, want %q", got, want)
+	}
+
+	bare := keyInfo{ID: "kABC123"}
+	if got, want := bare.label(), "kABC123"; got != want {
+		t.Errorf("label() = %q, want %q", got, want)
+	}
+}
+
+func TestNewKeyInfoProjectsCapabilities(t *testing.T) {
+	key := client.Key{
+		ID:          "k1",
+		KeyType:     client.KeyTypeAuth,
+		Description: "ci",
+		Expires:     time.Now().Add(48 * time.Hour),
+	}
+	key.Capabilities.Devices.Create.Reusable = true
+	key.Capabilities.Devices.Create.Preauthorized = true
+	key.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+
+	got := newKeyInfo(key)
+	if !got.Reusable || !got.Preauthorized || got.Ephemeral {
+		t.Errorf("newKeyInfo() capabilities = %+v, want reusable and preauthorized only", got)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "tag:ci" {
+		t.Errorf("newKeyInfo() tags = %v, want [tag:ci]", got.Tags)
+	}
+	if got.DaysToExpiry != 1 {
+		t.Errorf("newKeyInfo() DaysToExpiry = %d, want 1", got.DaysToExpiry)
 	}
 }

@@ -19,8 +19,15 @@ func NewNetworkAuditor(c *client.Client) *NetworkAuditor {
 	return &NetworkAuditor{client: c}
 }
 
-// Audit performs network exposure security checks
-func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy) ([]types.Suggestion, error) {
+// Audit performs network exposure security checks.
+//
+// tc carries tailnet-wide state shared with the other auditors. When nil, it is
+// fetched here so an individual auditor can be run on its own.
+func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy, tc *TailnetContext) ([]types.Suggestion, error) {
+	if tc == nil {
+		tc = FetchTailnetContext(ctx, n.client)
+	}
+
 	var findings []types.Suggestion
 
 	devices, err := n.client.GetDevices(ctx)
@@ -38,7 +45,7 @@ func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy) ([]types.S
 	findings = append(findings, n.checkSubnetRoutes(ctx, devices))
 
 	// NET-004: Check for HTTPS/Certificate Transparency exposure
-	findings = append(findings, n.checkHTTPSExposure(policy))
+	findings = append(findings, n.checkHTTPSExposure(policy, tc))
 
 	// NET-005: Check for exit nodes
 	findings = append(findings, n.checkExitNodes(devices))
@@ -60,7 +67,7 @@ func (n *NetworkAuditor) checkFunnelEndpoints(policy ACLPolicy) types.Suggestion
 		Category:    types.NetworkExposure,
 		Description: "Tailscale Funnel routes traffic from the public internet to local services without requiring Tailscale authentication.",
 		Remediation: "Review nodeAttrs for funnel attribute. Restrict Funnel to specific users/tags. Ensure only intended services are exposed.",
-		Source:      "https://tailscale.com/kb/1223/funnel",
+		Source:      "https://tailscale.com/docs/features/tailscale-funnel",
 		Pass:        true,
 	}
 
@@ -81,7 +88,7 @@ func (n *NetworkAuditor) checkFunnelEndpoints(policy ACLPolicy) types.Suggestion
 			Type:        types.FixTypeManual,
 			Description: "Review Funnel configuration in nodeAttrs",
 			AdminURL:    "https://login.tailscale.com/admin/acls",
-			DocURL:      "https://tailscale.com/kb/1223/funnel",
+			DocURL:      "https://tailscale.com/docs/features/tailscale-funnel",
 		}
 	}
 
@@ -96,7 +103,7 @@ func (n *NetworkAuditor) checkExitNodeACLs(policy ACLPolicy) types.Suggestion {
 		Category:    types.NetworkExposure,
 		Description: "Exit node usage is controlled via autogroup:internet in ACLs. Verify intended users have access.",
 		Remediation: "Review which users/groups have access to autogroup:internet. Exit node restrictions cannot be granular - it's all-or-nothing.",
-		Source:      "https://tailscale.com/kb/1103/exit-nodes",
+		Source:      "https://tailscale.com/docs/features/exit-nodes",
 		Pass:        true,
 	}
 
@@ -118,7 +125,7 @@ func (n *NetworkAuditor) checkExitNodeACLs(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Review ACL rules granting autogroup:internet access",
 			AdminURL:    "https://login.tailscale.com/admin/acls",
-			DocURL:      "https://tailscale.com/kb/1103/exit-nodes",
+			DocURL:      "https://tailscale.com/docs/features/exit-nodes",
 		}
 	}
 
@@ -133,7 +140,7 @@ func (n *NetworkAuditor) checkSubnetRoutes(ctx context.Context, devices []*clien
 		Category:    types.NetworkExposure,
 		Description: "Subnet routers are a critical trust boundary. Traffic is encrypted only to the subnet router - traffic to final destinations is UNENCRYPTED on the local network. A compromised subnet router exposes the entire advertised subnet.",
 		Remediation: "Enable stateful filtering on subnet routers. Restrict advertised routes to minimum required. Verify firewall rules on subnet router hosts. Consider separate subnet routers per security zone.",
-		Source:      "https://tailscale.com/kb/1019/subnets",
+		Source:      "https://tailscale.com/docs/features/subnet-routers",
 		Pass:        true,
 	}
 
@@ -169,7 +176,7 @@ func (n *NetworkAuditor) checkSubnetRoutes(ctx context.Context, devices []*clien
 			Type:        types.FixTypeManual,
 			Description: "Review and approve/reject subnet routes",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1019/subnets",
+			DocURL:      "https://tailscale.com/docs/features/subnet-routers",
 		}
 	}
 
@@ -183,7 +190,7 @@ func (n *NetworkAuditor) checkSubnetRoutes(ctx context.Context, devices []*clien
 				Type:        types.FixTypeManual,
 				Description: "Review and approve/reject subnet routes",
 				AdminURL:    "https://login.tailscale.com/admin/machines",
-				DocURL:      "https://tailscale.com/kb/1019/subnets",
+				DocURL:      "https://tailscale.com/docs/features/subnet-routers",
 			}
 		} else {
 			// Append to existing subnet router details
@@ -199,7 +206,7 @@ func (n *NetworkAuditor) checkSubnetRoutes(ctx context.Context, devices []*clien
 	return finding
 }
 
-func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
+func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy, tc *TailnetContext) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "NET-004",
 		Title:       "HTTPS certificates publish names to CT logs",
@@ -207,11 +214,36 @@ func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
 		Category:    types.NetworkExposure,
 		Description: "HTTPS certificates publish machine names to public Certificate Transparency logs. Sensitive machine names could be exposed.",
 		Remediation: "Review machine names before enabling HTTPS. Rename devices with sensitive information. Use randomized tailnet DNS name.",
-		Source:      "https://tailscale.com/kb/1153/enabling-https",
+		Source:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		Pass:        true,
 	}
 
-	// Check if HTTPS-related nodeAttrs are configured
+	// The tailnet setting is authoritative: HTTPS certificate provisioning is a
+	// tailnet-wide switch, not something inferred from nodeAttrs.
+	if settings := tc.settings(); settings != nil {
+		if !settings.HTTPSEnabled {
+			finding.Severity = types.Informational
+			finding.Description = "HTTPS certificate provisioning is disabled for this tailnet, so machine names are not published to Certificate Transparency logs."
+			finding.Details = "Confirmed via the Tailscale API (httpsEnabled is false)."
+			return finding
+		}
+
+		finding.Pass = false
+		finding.Description = "HTTPS certificate provisioning is enabled. Every machine name a certificate is issued for is published to public Certificate Transparency logs."
+		finding.Details = []string{
+			"Confirmed via the Tailscale API (httpsEnabled is true).",
+			"See DEV-007 for machine names that look sensitive.",
+		}
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeManual,
+			Description: "Review machine names, or disable HTTPS certificates if unused",
+			AdminURL:    "https://login.tailscale.com/admin/dns",
+			DocURL:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
+		}
+		return finding
+	}
+
+	// Without the setting, fall back to looking for HTTPS-related nodeAttrs.
 	var httpsConfigs []string
 	for _, attr := range policy.NodeAttrs {
 		for _, a := range attr.Attr {
@@ -229,17 +261,17 @@ func (n *NetworkAuditor) checkHTTPSExposure(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Review HTTPS configuration and machine names",
 			AdminURL:    "https://login.tailscale.com/admin/dns",
-			DocURL:      "https://tailscale.com/kb/1153/enabling-https",
+			DocURL:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		}
 	} else {
 		// This is informational - HTTPS might be enabled at the tailnet level
 		finding.Severity = types.Informational
-		finding.Description = "HTTPS configuration not found in nodeAttrs. If HTTPS is enabled at tailnet level, machine names are published to CT logs."
+		finding.Description = "Could not read the tailnet HTTPS setting and found no HTTPS-related nodeAttrs. If HTTPS certificates are enabled, machine names are published to CT logs."
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
 			Description: "Review HTTPS/DNS settings",
 			AdminURL:    "https://login.tailscale.com/admin/dns",
-			DocURL:      "https://tailscale.com/kb/1153/enabling-https",
+			DocURL:      "https://tailscale.com/docs/how-to/set-up-https-certificates",
 		}
 	}
 
@@ -254,7 +286,7 @@ func (n *NetworkAuditor) checkExitNodes(devices []*client.Device) types.Suggesti
 		Category:    types.NetworkExposure,
 		Description: "Exit node operators can see all internet traffic from connected clients - browsing history, unencrypted HTTP content, and DNS queries. Destination logging is disabled by default, leaving no audit trail.",
 		Remediation: "Only use trusted exit nodes. For mandatory exit node deployments, ensure high availability. Enable destination logging if compliance requires it. Review exit-node-allow-lan-access settings.",
-		Source:      "https://tailscale.com/kb/1103/exit-nodes",
+		Source:      "https://tailscale.com/docs/features/exit-nodes",
 		Pass:        true,
 	}
 
@@ -288,7 +320,7 @@ func (n *NetworkAuditor) checkExitNodes(devices []*client.Device) types.Suggesti
 			Type:        types.FixTypeManual,
 			Description: "Review exit node configuration and approve/reject routes",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1103/exit-nodes",
+			DocURL:      "https://tailscale.com/docs/features/exit-nodes",
 		}
 	}
 
@@ -303,7 +335,7 @@ func (n *NetworkAuditor) checkServeExposure(policy ACLPolicy) types.Suggestion {
 		Category:    types.NetworkExposure,
 		Description: "Tailscale Serve exposes local services (HTTP, HTTPS, TCP) to the tailnet. Services are accessible to any device that can reach the host.",
 		Remediation: "Review Serve configurations. Ensure only intended services are exposed. Use ACLs to restrict which users/devices can access served endpoints.",
-		Source:      "https://tailscale.com/kb/1242/tailscale-serve",
+		Source:      "https://tailscale.com/docs/reference/tailscale-cli/serve",
 		Pass:        true,
 	}
 
@@ -326,7 +358,7 @@ func (n *NetworkAuditor) checkServeExposure(policy ACLPolicy) types.Suggestion {
 			Type:        types.FixTypeManual,
 			Description: "Review Serve configuration and ensure ACLs restrict access appropriately",
 			AdminURL:    "https://login.tailscale.com/admin/acls",
-			DocURL:      "https://tailscale.com/kb/1242/tailscale-serve",
+			DocURL:      "https://tailscale.com/docs/reference/tailscale-cli/serve",
 		}
 	}
 
@@ -341,7 +373,7 @@ func (n *NetworkAuditor) checkAppConnectors(devices []*client.Device) types.Sugg
 		Category:    types.NetworkExposure,
 		Description: "App connectors route traffic to specific SaaS applications through your tailnet. Review which apps are accessible and through which devices.",
 		Remediation: "Audit app connector configurations. Ensure only approved SaaS applications are accessible. Review which devices are acting as app connectors.",
-		Source:      "https://tailscale.com/kb/1281/app-connectors",
+		Source:      "https://tailscale.com/docs/features/app-connectors",
 		Pass:        true,
 	}
 
@@ -379,7 +411,7 @@ func (n *NetworkAuditor) checkAppConnectors(devices []*client.Device) types.Sugg
 			Type:        types.FixTypeManual,
 			Description: "Review app connector configurations",
 			AdminURL:    "https://login.tailscale.com/admin/machines",
-			DocURL:      "https://tailscale.com/kb/1281/app-connectors",
+			DocURL:      "https://tailscale.com/docs/features/app-connectors",
 		}
 	}
 
