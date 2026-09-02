@@ -67,8 +67,8 @@ func LoadIgnoreFile(path string) (*IgnoreList, error) {
 	return il, scanner.Err()
 }
 
-// LoadIgnoreFiles tries to load ignore files from default locations.
-// Later files in the list override earlier ones.
+// LoadIgnoreFiles tries to load ignore files from the default locations and
+// returns the first one that yields any rules, with the path it came from.
 func LoadIgnoreFiles() (*IgnoreList, string) {
 	for _, path := range DefaultIgnoreFiles() {
 		if _, err := os.Stat(path); err == nil {
@@ -91,17 +91,25 @@ func (il *IgnoreList) Count() int {
 	return len(il.ids)
 }
 
-// FilterIgnored returns suggestions that are not in the ignore list
-func FilterIgnored(suggestions []Suggestion, ignoreList *IgnoreList) []Suggestion {
+// FilterIgnored returns the suggestions that are not in the ignore list, and
+// the IDs of the ones it removed.
+func FilterIgnored(suggestions []Suggestion, ignoreList *IgnoreList) ([]Suggestion, []string) {
 	if ignoreList == nil || ignoreList.Count() == 0 {
-		return suggestions
+		return suggestions, nil
 	}
 
 	var result []Suggestion
+	var ignored []string
+	seen := make(map[string]bool)
 	for _, s := range suggestions {
 		if !ignoreList.IsIgnored(s.ID) {
 			result = append(result, s)
+			continue
+		}
+		if !seen[s.ID] {
+			seen[s.ID] = true
+			ignored = append(ignored, s.ID)
 		}
 	}
-	return result
+	return result, ignored
 }

@@ -51,7 +51,7 @@ func PrintBanner(w io.Writer, tailnetName, version, buildID string) {
 	fmt.Fprintln(w)
 
 	headerColor.Fprintln(w, "  ─────────────────────────────────────────────────────────────────────────")
-	headerColor.Fprintf(w, "  Tailnet: %s\n", tailnetName)
+	headerColor.Fprintf(w, "  Tailnet: %s\n", Sanitize(tailnetName))
 	headerColor.Fprintln(w, "  ─────────────────────────────────────────────────────────────────────────")
 	fmt.Fprintln(w)
 	dimColor.Fprintln(w, "  Running security checks...")
@@ -132,12 +132,13 @@ func printSuggestion(w io.Writer, s types.Suggestion) {
 		severityLabel = passColor.Sprintf("[PASS]")
 	}
 
-	// Print suggestion
-	fmt.Fprintf(w, "%s %s: %s\n", severityLabel, s.ID, s.Title)
+	// Print suggestion. Titles, descriptions and details interpolate values
+	// reported by devices and keys, so they are sanitized before display.
+	fmt.Fprintf(w, "%s %s: %s\n", severityLabel, Sanitize(s.ID), Sanitize(s.Title))
 
 	// Description (indented)
 	if s.Description != "" {
-		for _, line := range wrapText(s.Description, 64) {
+		for _, line := range wrapText(Sanitize(s.Description), 64) {
 			fmt.Fprintf(w, "  %s\n", line)
 		}
 	}
@@ -151,7 +152,7 @@ func printSuggestion(w io.Writer, s types.Suggestion) {
 	// Remediation (if not passing)
 	if !s.Pass && s.Remediation != "" {
 		fmt.Fprintf(w, "  %s\n", headerColor.Sprint("Remediation:"))
-		for _, line := range wrapText(s.Remediation, 64) {
+		for _, line := range wrapText(Sanitize(s.Remediation), 64) {
 			fmt.Fprintf(w, "  %s\n", line)
 		}
 		fmt.Fprintln(w)
@@ -178,7 +179,7 @@ func printDetails(w io.Writer, details any) {
 	case []string:
 		if len(d) > 0 {
 			fmt.Fprintf(w, "  %s\n", headerColor.Sprint("Affected items:"))
-			for _, item := range d {
+			for _, item := range sanitizeAll(d) {
 				fmt.Fprintf(w, "    • %s\n", item)
 			}
 			fmt.Fprintln(w)
@@ -187,13 +188,13 @@ func printDetails(w io.Writer, details any) {
 		if len(d) > 0 {
 			fmt.Fprintf(w, "  %s\n", headerColor.Sprint("Details:"))
 			for k, v := range d {
-				fmt.Fprintf(w, "    %s: %v\n", k, v)
+				fmt.Fprintf(w, "    %s: %s\n", Sanitize(k), Sanitize(fmt.Sprintf("%v", v)))
 			}
 			fmt.Fprintln(w)
 		}
 	case string:
 		if d != "" {
-			fmt.Fprintf(w, "  %s %s\n", headerColor.Sprint("Details:"), d)
+			fmt.Fprintf(w, "  %s %s\n", headerColor.Sprint("Details:"), Sanitize(d))
 			fmt.Fprintln(w)
 		}
 	}

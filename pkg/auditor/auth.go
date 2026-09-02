@@ -14,6 +14,9 @@ type AuthAuditor struct {
 	client *client.Client
 }
 
+// authKeyChecks are the checks that read the tailnet's machine auth keys.
+var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004"}
+
 // NewAuthAuditor creates a new auth auditor
 func NewAuthAuditor(c *client.Client) *AuthAuditor {
 	return &AuthAuditor{client: c}
@@ -68,15 +71,23 @@ func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// device-creation capabilities; GetAuthKeys filters those out.
 	apiKeys, err := a.client.GetAuthKeys(ctx)
 	if err != nil {
-		// Auth keys might not be accessible with all credentials
+		// Auth keys might not be accessible with all credentials. Report the
+		// checks as not evaluated rather than passing: they did not run, and a
+		// passing finding would be filtered out of the default output and
+		// counted as a satisfied control.
 		findings = append(findings, types.Suggestion{
 			ID:          "AUTH-ERR",
 			Title:       "Could not retrieve auth keys",
-			Severity:    types.Informational,
+			Severity:    types.Medium,
 			Category:    types.Authentication,
-			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. This may require the auth_keys:read scope.", err),
-			Pass:        true,
+			Description: fmt.Sprintf("Unable to retrieve auth keys: %v. The auth key checks were not evaluated.", err),
+			Remediation: "Grant the credential the auth_keys:read scope, then re-run the audit.",
+			Pass:        false,
 		})
+		for _, id := range authKeyChecks {
+			findings = append(findings, types.NotEvaluated(id,
+				"The tailnet's auth keys could not be read. See AUTH-ERR for the error."))
+		}
 		return findings, nil
 	}
 
@@ -266,29 +277,17 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 		finding.Details = nonEphemeralReusable
 		finding.Description = fmt.Sprintf("Found %d reusable non-ephemeral key(s). If used for CI/CD, consider ephemeral keys instead.", len(nonEphemeralReusable))
 
-		// Build fixable items for creating ephemeral replacement keys
-		var fixableItems []types.FixableItem
-		for _, key := range keys {
-			if key.Reusable && !key.Ephemeral {
-				desc := fmt.Sprintf("Expires in %d days", key.DaysToExpiry)
-				if len(key.Tags) > 0 {
-					desc += fmt.Sprintf(", tags: %v", key.Tags)
-				}
-				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          key.ID,
-					Name:        key.label(),
-					Description: desc,
-				})
-			}
-		}
-
+		// Replacing a key is a manual step. The API can create the new key, but
+		// it returns the secret only once, and whatever provisions devices with
+		// the old key has to be updated with the new one before the old one is
+		// deleted. Deleting first breaks the caller that depends on it.
 		finding.Fix = &types.FixInfo{
-			Type:        types.FixTypeAPI,
-			Description: "Create ephemeral replacement keys (7-day expiry) and delete old keys",
+			Type: types.FixTypeManual,
+			Description: "Create an ephemeral replacement key, update the CI/CD secret that " +
+				"holds the current key, then delete the old key.",
 			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
 			DocURL:      "https://tailscale.com/docs/features/ephemeral-nodes",
-			Items:       fixableItems,
-			AutoFixSafe: false, // User should verify CI/CD usage before replacing
+			AutoFixSafe: false,
 		}
 	}
 

@@ -19,9 +19,25 @@ func NewSSHAuditor(c *client.Client) *SSHAuditor {
 	return &SSHAuditor{client: c}
 }
 
-// Audit performs SSH security checks
-func (s *SSHAuditor) Audit(ctx context.Context, policy ACLPolicy) ([]types.Suggestion, error) {
+// sshPolicyChecks are the SSH checks that read the tailnet policy file. Every
+// SSH check does, so an unparsed policy leaves none of them evaluable.
+var sshPolicyChecks = []string{"SSH-001", "SSH-002", "SSH-003", "SSH-004"}
+
+// Audit performs SSH security checks.
+//
+// policyParsed reports whether policy holds the tailnet's actual policy file.
+// When it does not, the checks report that they did not run: every one of them
+// reads the policy, and a zero-valued document would read as a clean result.
+func (s *SSHAuditor) Audit(ctx context.Context, policy ACLPolicy, policyParsed bool) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
+
+	if !policyParsed {
+		for _, id := range sshPolicyChecks {
+			findings = append(findings, types.NotEvaluated(id,
+				"The tailnet policy file could not be read or parsed, so the SSH rules were not evaluated."))
+		}
+		return findings, nil
+	}
 
 	// SSH-001: Check session recording enforcement
 	findings = append(findings, s.checkSessionRecording(policy))
@@ -66,18 +82,6 @@ func (s *SSHAuditor) checkSessionRecording(policy ACLPolicy) types.Suggestion {
 		finding.Pass = false
 		finding.Details = rulesNotEnforced
 		finding.Description = fmt.Sprintf("Found %d SSH rule(s) with recording but without enforceRecorder:true. Sessions can bypass recording if recorders are unavailable.", len(rulesNotEnforced))
-
-		// Build fixable items for enabling enforceRecorder
-		var fixableItems []types.FixableItem
-		for i, rule := range policy.SSH {
-			if len(rule.Recorder) > 0 && !rule.EnforceRecorder {
-				fixableItems = append(fixableItems, types.FixableItem{
-					ID:          fmt.Sprintf("ssh-rule-%d", i),
-					Name:        fmt.Sprintf("SSH Rule %d", i+1),
-					Description: fmt.Sprintf("recorder=%v, dst=%v", rule.Recorder, rule.Dst),
-				})
-			}
-		}
 
 		finding.Fix = &types.FixInfo{
 			Type: types.FixTypeManual,
@@ -277,16 +281,6 @@ func (s *SSHAuditor) checkRootAccessSecurity(policy ACLPolicy) types.Suggestion 
 		}
 		finding.Details = details
 		finding.Description = fmt.Sprintf("Found %d SSH rule(s) allowing high-risk access without check mode re-authentication.", len(riskyRules))
-
-		// Build fixable items
-		var fixableItems []types.FixableItem
-		for _, r := range riskyRules {
-			fixableItems = append(fixableItems, types.FixableItem{
-				ID:          fmt.Sprintf("ssh-rule-%d", r.index),
-				Name:        fmt.Sprintf("SSH Rule %d", r.index+1),
-				Description: strings.Join(r.reasons, ", "),
-			})
-		}
 
 		finding.Fix = &types.FixInfo{
 			Type: types.FixTypeManual,

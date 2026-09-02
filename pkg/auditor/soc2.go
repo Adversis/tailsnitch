@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -677,15 +676,4 @@ func (c *SOC2Collector) getCheck(id string) types.CheckInfo {
 		}
 	}
 	return types.CheckInfo{ID: id, Title: "Unknown check"}
-}
-
-// parseVersionForSOC2 extracts major/minor from version string
-func parseVersionForSOC2(version string, re *regexp.Regexp) (major, minor int, ok bool) {
-	matches := re.FindStringSubmatch(version)
-	if len(matches) < 3 {
-		return 0, 0, false
-	}
-	major, _ = strconv.Atoi(matches[1])
-	minor, _ = strconv.Atoi(matches[2])
-	return major, minor, true
 }

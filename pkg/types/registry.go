@@ -188,3 +188,11 @@ func (r *CheckRegistry) ResolveAll(names []string) ([]string, error) {
 
 // DefaultRegistry is the global check registry instance
 var DefaultRegistry = NewCheckRegistry()
+
+// Lookup returns the metadata for a check ID, and whether it is registered.
+func (r *CheckRegistry) Lookup(id string) (CheckInfo, bool) {
+	if check, ok := r.byID[strings.ToUpper(id)]; ok {
+		return *check, true
+	}
+	return CheckInfo{}, false
+}

@@ -28,12 +28,6 @@ func tsTime(s string) *tsapi.Time {
 	return &tsapi.Time{Time: t}
 }
 
-// tsTimeVal builds a required API timestamp, such as a device key expiry.
-func tsTimeVal(s string) tsapi.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return tsapi.Time{Time: t}
-}
-
 func TestCheckTaggedDevicesKeyExpiry(t *testing.T) {
 	d := &DeviceAuditor{}
 

@@ -3,6 +3,7 @@ package types
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -75,7 +76,7 @@ func TestFilterIgnored(t *testing.T) {
 		"DEV-004": true,
 	}}
 
-	filtered := FilterIgnored(suggestions, il)
+	filtered, ignored := FilterIgnored(suggestions, il)
 
 	if len(filtered) != 1 {
 		t.Errorf("len(filtered) = %d, want 1", len(filtered))
@@ -84,6 +85,11 @@ func TestFilterIgnored(t *testing.T) {
 	if filtered[0].ID != "ACL-002" {
 		t.Errorf("filtered[0].ID = %q, want ACL-002", filtered[0].ID)
 	}
+
+	want := []string{"ACL-001", "DEV-004"}
+	if !slices.Equal(ignored, want) {
+		t.Errorf("ignored = %v, want %v", ignored, want)
+	}
 }
 
 func TestFilterIgnored_NilList(t *testing.T) {
@@ -91,9 +97,13 @@ func TestFilterIgnored_NilList(t *testing.T) {
 		{ID: "ACL-001", Title: "Test 1"},
 	}
 
-	filtered := FilterIgnored(suggestions, nil)
+	filtered, ignored := FilterIgnored(suggestions, nil)
 
 	if len(filtered) != 1 {
 		t.Errorf("len(filtered) = %d, want 1 with nil ignore list", len(filtered))
+	}
+
+	if ignored != nil {
+		t.Errorf("ignored = %v, want nil with nil ignore list", ignored)
 	}
 }

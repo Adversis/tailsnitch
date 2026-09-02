@@ -23,7 +23,7 @@ func NewNetworkAuditor(c *client.Client) *NetworkAuditor {
 //
 // tc carries tailnet-wide state shared with the other auditors. When nil, it is
 // fetched here so an individual auditor can be run on its own.
-func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy, tc *TailnetContext) ([]types.Suggestion, error) {
+func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy, policyParsed bool, tc *TailnetContext) ([]types.Suggestion, error) {
 	if tc == nil {
 		tc = FetchTailnetContext(ctx, n.client)
 	}
@@ -35,29 +35,42 @@ func (n *NetworkAuditor) Audit(ctx context.Context, policy ACLPolicy, tc *Tailne
 		return nil, fmt.Errorf("failed to get devices: %w", err)
 	}
 
-	// NET-001: Check for Funnel endpoints
-	findings = append(findings, n.checkFunnelEndpoints(policy))
+	if policyParsed {
+		// NET-001: Check for Funnel endpoints
+		findings = append(findings, n.checkFunnelEndpoints(policy))
 
-	// NET-002: Check for exit node ACL configuration
-	findings = append(findings, n.checkExitNodeACLs(policy))
+		// NET-002: Check for exit node ACL configuration
+		findings = append(findings, n.checkExitNodeACLs(policy))
+
+		// NET-006: Check for Serve exposure
+		findings = append(findings, n.checkServeExposure(policy))
+	} else {
+		for _, id := range networkPolicyChecks {
+			findings = append(findings, types.NotEvaluated(id,
+				"The tailnet policy file could not be read or parsed, so the node attributes were not evaluated."))
+		}
+	}
 
 	// NET-003: Check for unapproved subnet routes
 	findings = append(findings, n.checkSubnetRoutes(ctx, devices))
 
-	// NET-004: Check for HTTPS/Certificate Transparency exposure
+	// NET-004: Check for HTTPS/Certificate Transparency exposure.
+	// The tailnet setting is authoritative here, so this runs either way.
 	findings = append(findings, n.checkHTTPSExposure(policy, tc))
 
 	// NET-005: Check for exit nodes
 	findings = append(findings, n.checkExitNodes(devices))
-
-	// NET-006: Check for Serve exposure
-	findings = append(findings, n.checkServeExposure(policy))
 
 	// NET-007: Check for app connectors
 	findings = append(findings, n.checkAppConnectors(devices))
 
 	return findings, nil
 }
+
+// networkPolicyChecks are the network checks that read node attributes from
+// the tailnet policy file. NET-004 is absent: it reads the authoritative
+// tailnet setting and only falls back to the policy.
+var networkPolicyChecks = []string{"NET-001", "NET-002", "NET-006"}
 
 func (n *NetworkAuditor) checkFunnelEndpoints(policy ACLPolicy) types.Suggestion {
 	finding := types.Suggestion{

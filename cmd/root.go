@@ -188,9 +188,16 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		}
 
 		if ignoreList.Count() > 0 {
-			suggestions = types.FilterIgnored(suggestions, ignoreList)
+			var ignored []string
+			suggestions, ignored = types.FilterIgnored(suggestions, ignoreList)
+			// Recorded on the report so that --json shows the suppression too:
+			// the ignore file may come from the working directory rather than
+			// from whoever is reading the output.
+			report.IgnoreFile = ignoredPath
+			report.Ignored = ignored
 			if !jsonOutput {
-				fmt.Printf("  Using ignore file: %s (%d rules)\n\n", ignoredPath, ignoreList.Count())
+				fmt.Printf("  Using ignore file: %s (%d rules, %d finding(s) suppressed)\n\n",
+					ignoredPath, ignoreList.Count(), len(ignored))
 			}
 		}
 	}

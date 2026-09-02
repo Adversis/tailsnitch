@@ -12,6 +12,7 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/Adversis/tailsnitch/pkg/client"
+	"github.com/Adversis/tailsnitch/pkg/output"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
@@ -63,16 +64,6 @@ type Fixer struct {
 	dryRun   bool
 	auditLog *AuditLog
 	out      io.Writer
-}
-
-// New creates a new Fixer (legacy, use NewWithOptions for full control)
-func New(c *client.Client, report *types.AuditReport, autoFix bool) *Fixer {
-	return &Fixer{
-		client:  c,
-		report:  report,
-		autoFix: autoFix,
-		out:     os.Stdout,
-	}
 }
 
 // NewWithOptions creates a new Fixer with full options
@@ -157,10 +148,10 @@ func (f *Fixer) showExternalFixes(suggestions []types.Suggestion) {
 	fmt.Fprintln(f.out)
 
 	for _, s := range suggestions {
-		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), s.Title)
+		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), output.Sanitize(s.Title))
 		if s.Fix != nil {
 			if s.Fix.Description != "" {
-				fmt.Fprintf(f.out, "    %s\n", s.Fix.Description)
+				fmt.Fprintf(f.out, "    %s\n", output.Sanitize(s.Fix.Description))
 			}
 			if s.Fix.DocURL != "" {
 				fmt.Fprintf(f.out, "    Docs: %s\n", linkStyle.Render(s.Fix.DocURL))
@@ -207,10 +198,10 @@ func (f *Fixer) showManualFixes(suggestions []types.Suggestion) {
 	fmt.Fprintln(f.out)
 
 	for _, s := range suggestions {
-		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), s.Title)
+		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), output.Sanitize(s.Title))
 		if s.Fix != nil {
 			if s.Fix.Description != "" {
-				fmt.Fprintf(f.out, "    %s\n", s.Fix.Description)
+				fmt.Fprintf(f.out, "    %s\n", output.Sanitize(s.Fix.Description))
 			}
 			if s.Fix.AdminURL != "" {
 				fmt.Fprintf(f.out, "    Admin Console: %s\n", linkStyle.Render(s.Fix.AdminURL))
@@ -226,7 +217,6 @@ func (f *Fixer) runInteractiveFix(ctx context.Context, suggestions []types.Sugge
 
 	// Categorize suggestions by fix action type
 	var keysToDelete []types.FixableItem       // AUTH-001, AUTH-002, AUTH-003
-	var keysToReplace []types.FixableItem      // AUTH-004 (create ephemeral replacement)
 	var devicesToDelete []types.FixableItem    // DEV-004
 	var devicesToUntag []types.FixableItem     // DEV-002
 	var devicesToAuthorize []types.FixableItem // DEV-005
@@ -247,8 +237,6 @@ func (f *Fixer) runInteractiveFix(ctx context.Context, suggestions []types.Sugge
 		switch s.ID {
 		case "AUTH-001", "AUTH-002", "AUTH-003":
 			keysToDelete = append(keysToDelete, s.Fix.Items...)
-		case "AUTH-004":
-			keysToReplace = append(keysToReplace, s.Fix.Items...)
 		case "DEV-004":
 			devicesToDelete = append(devicesToDelete, s.Fix.Items...)
 		case "DEV-002":
@@ -290,14 +278,7 @@ func (f *Fixer) runInteractiveFix(ctx context.Context, suggestions []types.Sugge
 		}
 	}
 
-	// 5. Replace non-ephemeral keys (medium risk)
-	if len(keysToReplace) > 0 {
-		if err := f.runKeyReplacementFixer(ctx, keysToReplace); err != nil {
-			return err
-		}
-	}
-
-	// 6. ACL modifications (high risk) - show info only for now
+	// 5. ACL modifications (high risk) - show info only for now
 	if len(aclSuggestions) > 0 {
 		f.showACLFixInfo(aclSuggestions)
 	}
@@ -327,7 +308,7 @@ func (f *Fixer) runKeyFixer(ctx context.Context, keys []types.FixableItem) error
 	if f.dryRun {
 		fmt.Fprintf(f.out, "\n  %s Would delete %d auth key(s):\n", warningStyle.Render("[DRY RUN]"), len(selected))
 		for _, key := range selected {
-			fmt.Fprintf(f.out, "    - %s (%s)\n", key.ID, key.Description)
+			fmt.Fprintf(f.out, "    - %s (%s)\n", output.Sanitize(key.ID), output.Sanitize(key.Description))
 			f.logAction("delete", "auth_key", key.ID, key.Name, key.Description, true, nil)
 		}
 		return nil
@@ -340,7 +321,7 @@ func (f *Fixer) runKeyFixer(ctx context.Context, keys []types.FixableItem) error
 
 	// Delete the keys
 	for _, key := range selected {
-		fmt.Fprintf(f.out, "  Deleting key %s... ", key.ID)
+		fmt.Fprintf(f.out, "  Deleting key %s... ", output.Sanitize(key.ID))
 		if err := f.client.DeleteKey(ctx, key.ID); err != nil {
 			color.Red("FAILED: %v\n", err)
 			f.logAction("delete", "auth_key", key.ID, key.Name, key.Description, false, err)
@@ -375,7 +356,7 @@ func (f *Fixer) runDeviceFixer(ctx context.Context, devices []types.FixableItem)
 	if f.dryRun {
 		fmt.Fprintf(f.out, "\n  %s Would delete %d device(s):\n", warningStyle.Render("[DRY RUN]"), len(selected))
 		for _, dev := range selected {
-			fmt.Fprintf(f.out, "    - %s (%s)\n", dev.Name, dev.Description)
+			fmt.Fprintf(f.out, "    - %s (%s)\n", output.Sanitize(dev.Name), output.Sanitize(dev.Description))
 			f.logAction("delete", "device", dev.ID, dev.Name, dev.Description, true, nil)
 		}
 		return nil
@@ -388,7 +369,7 @@ func (f *Fixer) runDeviceFixer(ctx context.Context, devices []types.FixableItem)
 
 	// Delete the devices
 	for _, dev := range selected {
-		fmt.Fprintf(f.out, "  Deleting device %s... ", dev.Name)
+		fmt.Fprintf(f.out, "  Deleting device %s... ", output.Sanitize(dev.Name))
 		if err := f.client.DeleteDevice(ctx, dev.ID); err != nil {
 			color.Red("FAILED: %v\n", err)
 			f.logAction("delete", "device", dev.ID, dev.Name, dev.Description, false, err)
@@ -449,7 +430,7 @@ func (f *Fixer) runDeviceAuthorizeFixer(ctx context.Context, devices []types.Fix
 	if f.dryRun {
 		fmt.Fprintf(f.out, "\n  %s Would authorize %d device(s):\n", warningStyle.Render("[DRY RUN]"), len(selected))
 		for _, dev := range selected {
-			fmt.Fprintf(f.out, "    - %s (%s)\n", dev.Name, dev.Description)
+			fmt.Fprintf(f.out, "    - %s (%s)\n", output.Sanitize(dev.Name), output.Sanitize(dev.Description))
 			f.logAction("authorize", "device", dev.ID, dev.Name, dev.Description, true, nil)
 		}
 		return nil
@@ -462,7 +443,7 @@ func (f *Fixer) runDeviceAuthorizeFixer(ctx context.Context, devices []types.Fix
 
 	// Authorize the devices
 	for _, dev := range selected {
-		fmt.Fprintf(f.out, "  Authorizing device %s... ", dev.Name)
+		fmt.Fprintf(f.out, "  Authorizing device %s... ", output.Sanitize(dev.Name))
 		if err := f.client.AuthorizeDevice(ctx, dev.ID); err != nil {
 			color.Red("FAILED: %v\n", err)
 			f.logAction("authorize", "device", dev.ID, dev.Name, dev.Description, false, err)
@@ -497,7 +478,7 @@ func (f *Fixer) runTagRemovalFixer(ctx context.Context, devices []types.FixableI
 	if f.dryRun {
 		fmt.Fprintf(f.out, "\n  %s Would remove tags from %d device(s):\n", warningStyle.Render("[DRY RUN]"), len(selected))
 		for _, dev := range selected {
-			fmt.Fprintf(f.out, "    - %s (%s)\n", dev.Name, dev.Description)
+			fmt.Fprintf(f.out, "    - %s (%s)\n", output.Sanitize(dev.Name), output.Sanitize(dev.Description))
 			f.logAction("remove_tags", "device", dev.ID, dev.Name, dev.Description, true, nil)
 		}
 		return nil
@@ -510,7 +491,7 @@ func (f *Fixer) runTagRemovalFixer(ctx context.Context, devices []types.FixableI
 
 	// Remove tags from the devices
 	for _, dev := range selected {
-		fmt.Fprintf(f.out, "  Removing tags from %s... ", dev.Name)
+		fmt.Fprintf(f.out, "  Removing tags from %s... ", output.Sanitize(dev.Name))
 		if err := f.client.SetDeviceTags(ctx, dev.ID, []string{}); err != nil {
 			color.Red("FAILED: %v\n", err)
 			f.logAction("remove_tags", "device", dev.ID, dev.Name, dev.Description, false, err)
@@ -523,59 +504,6 @@ func (f *Fixer) runTagRemovalFixer(ctx context.Context, devices []types.FixableI
 	return nil
 }
 
-func (f *Fixer) runKeyReplacementFixer(ctx context.Context, keys []types.FixableItem) error {
-	if len(keys) == 0 {
-		return nil
-	}
-
-	fmt.Fprintf(f.out, "\n  Found %d non-ephemeral reusable key(s) that could be replaced with ephemeral keys:\n\n", len(keys))
-
-	// Run the key selection TUI
-	selected, err := RunKeySelector(keys, f.autoFix)
-	if err != nil {
-		return err
-	}
-
-	if len(selected) == 0 {
-		fmt.Fprintln(f.out, "  No keys selected for replacement.")
-		return nil
-	}
-
-	// Confirm replacement (skip in dry-run mode)
-	if f.dryRun {
-		fmt.Fprintf(f.out, "\n  %s Would replace %d key(s) with ephemeral versions:\n", warningStyle.Render("[DRY RUN]"), len(selected))
-		for _, key := range selected {
-			fmt.Fprintf(f.out, "    - %s (%s)\n", key.ID, key.Description)
-			f.logAction("replace", "auth_key", key.ID, key.Name, key.Description, true, nil)
-		}
-		return nil
-	}
-
-	if !f.confirmAction(fmt.Sprintf("Replace %d key(s) with ephemeral versions (7-day expiry)?", len(selected))) {
-		fmt.Fprintln(f.out, "  Cancelled.")
-		return nil
-	}
-
-	// Replace the keys
-	for _, key := range selected {
-		fmt.Fprintf(f.out, "  Deleting old key %s... ", key.ID)
-		if err := f.client.DeleteKey(ctx, key.ID); err != nil {
-			color.Red("FAILED: %v\n", err)
-			f.logAction("replace", "auth_key", key.ID, key.Name, key.Description, false, err)
-			continue
-		}
-		color.Green("OK\n")
-		f.logAction("replace", "auth_key", key.ID, key.Name, key.Description, true, nil)
-
-		// Note: Creating a replacement key would require the original key's tags
-		// For now, just inform the user they need to create a new one manually
-		fmt.Fprintf(f.out, "    %s Create a new ephemeral key in admin console with the same tags.\n",
-			warningStyle.Render("→"))
-	}
-
-	return nil
-}
-
 func (f *Fixer) showACLFixInfo(suggestions []types.Suggestion) {
 	fmt.Fprintln(f.out, "\n"+sectionStyle.Render("ACL Modifications (manual review recommended):"))
 	fmt.Fprintln(f.out)
@@ -583,9 +511,9 @@ func (f *Fixer) showACLFixInfo(suggestions []types.Suggestion) {
 	fmt.Fprintln(f.out)
 
 	for _, s := range suggestions {
-		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), s.Title)
+		fmt.Fprintf(f.out, "  %s %s\n", warningStyle.Render("●"), output.Sanitize(s.Title))
 		if s.Fix != nil {
-			fmt.Fprintf(f.out, "    %s\n", s.Fix.Description)
+			fmt.Fprintf(f.out, "    %s\n", output.Sanitize(s.Fix.Description))
 			if s.Fix.AdminURL != "" {
 				fmt.Fprintf(f.out, "    Admin Console: %s\n", linkStyle.Render(s.Fix.AdminURL))
 			}

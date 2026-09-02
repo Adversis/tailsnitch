@@ -58,8 +58,12 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		Tailnet:   a.client.Tailnet(),
 	}
 
-	// Get ACL policy for checks that need it (Network and SSH auditors)
+	// Get ACL policy for checks that need it (Network and SSH auditors).
+	// policyParsed gates those checks: a zero-valued policy would otherwise
+	// read as a tailnet with no SSH rules and no node attributes, which the
+	// checks would report as passing.
 	var policy ACLPolicy
+	policyParsed := false
 	aclHuJSON, err := a.client.GetACLHuJSON(ctx)
 	if err != nil {
 		// Check for authentication errors - fail fast
@@ -82,21 +86,25 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		if err != nil {
 			report.Suggestions = append(report.Suggestions, types.Suggestion{
 				ID:          "SYS-002",
-				Title:       "ACL policy parsing warning",
-				Severity:    types.Low,
+				Title:       "ACL policy could not be parsed",
+				Severity:    types.Medium,
 				Category:    types.AccessControl,
-				Description: fmt.Sprintf("Could not standardize HuJSON ACL: %v. Some checks may be incomplete.", err),
-				Pass:        true,
+				Description: fmt.Sprintf("Could not standardize HuJSON ACL: %v. The checks that read the policy file were not evaluated.", err),
+				Remediation: "Correct the tailnet policy file syntax, then re-run the audit.",
+				Pass:        false,
 			})
 		} else if err := json.Unmarshal(standardizedACL, &policy); err != nil {
 			report.Suggestions = append(report.Suggestions, types.Suggestion{
 				ID:          "SYS-002",
-				Title:       "ACL policy parsing warning",
-				Severity:    types.Low,
+				Title:       "ACL policy could not be parsed",
+				Severity:    types.Medium,
 				Category:    types.AccessControl,
-				Description: fmt.Sprintf("ACL policy could not be fully parsed: %v. Some checks may be incomplete.", err),
-				Pass:        true,
+				Description: fmt.Sprintf("ACL policy could not be fully parsed: %v. The checks that read the policy file were not evaluated.", err),
+				Remediation: "Correct the tailnet policy file syntax, then re-run the audit.",
+				Pass:        false,
 			})
+		} else {
+			policyParsed = true
 		}
 	}
 
@@ -145,7 +153,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// Network auditor (uses pre-fetched ACL policy)
 	g.Go(func() error {
 		auditor := NewNetworkAuditor(a.client)
-		findings, err := auditor.Audit(gctx, policy, tailnetCtx)
+		findings, err := auditor.Audit(gctx, policy, policyParsed, tailnetCtx)
 		appendResult(auditorResult{name: "Network", findings: findings, err: err})
 		return nil
 	})
@@ -153,7 +161,7 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// SSH auditor (uses pre-fetched ACL policy)
 	g.Go(func() error {
 		auditor := NewSSHAuditor(a.client)
-		findings, err := auditor.Audit(gctx, policy)
+		findings, err := auditor.Audit(gctx, policy, policyParsed)
 		appendResult(auditorResult{name: "SSH", findings: findings, err: err})
 		return nil
 	})

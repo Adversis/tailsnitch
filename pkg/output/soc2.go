@@ -39,15 +39,18 @@ func SOC2CSV(w io.Writer, report *types.SOC2Report) error {
 
 	// Write each test as a row
 	for _, test := range report.Tests {
+		// Every field is passed through csvField: the resource and detail
+		// columns carry names and versions reported by devices, and the rest
+		// costs nothing to neutralize.
 		row := []string{
-			test.ResourceType,
-			test.ResourceID,
-			test.ResourceName,
-			test.CheckID,
-			test.CheckTitle,
-			strings.Join(test.CCCodes, ";"),
-			string(test.Status),
-			test.Details,
+			csvField(test.ResourceType),
+			csvField(test.ResourceID),
+			csvField(test.ResourceName),
+			csvField(test.CheckID),
+			csvField(test.CheckTitle),
+			csvField(strings.Join(test.CCCodes, ";")),
+			csvField(string(test.Status)),
+			csvField(test.Details),
 			test.TestedAt.Format("2006-01-02T15:04:05Z"),
 		}
 		if err := writer.Write(row); err != nil {
