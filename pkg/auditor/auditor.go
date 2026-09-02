@@ -112,6 +112,9 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// parallel auditors below do not each re-request it.
 	tailnetCtx := FetchTailnetContext(ctx, a.client)
 
+	// Shared with the ACL and Auth auditors so they do not each re-request it.
+	devices, devErr := a.client.GetDevices(ctx)
+
 	// Run all auditors in parallel using errgroup
 	var (
 		results []auditorResult
@@ -126,18 +129,18 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		mu.Unlock()
 	}
 
-	// ACL auditor
+	// ACL auditor (uses the shared device inventory)
 	g.Go(func() error {
 		auditor := NewACLAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, devices, devErr)
 		appendResult(auditorResult{name: "ACL", findings: findings, err: err})
 		return nil // Don't fail the group on auditor errors
 	})
 
-	// Auth auditor
+	// Auth auditor (uses pre-fetched ACL policy and the shared device inventory)
 	g.Go(func() error {
 		auditor := NewAuthAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, policy, policyParsed, devices)
 		appendResult(auditorResult{name: "Auth", findings: findings, err: err})
 		return nil
 	})

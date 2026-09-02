@@ -91,8 +91,10 @@ type AutoApprovers struct {
 	ExitNode []string            `json:"exitNode"`
 }
 
-// Audit performs ACL-related security checks
-func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// Audit performs ACL-related security checks. devices and devErr are the
+// tailnet's device inventory, pre-fetched once in Auditor.Run and shared with
+// the Auth auditor; they are unused until ACL-011 consumes them.
+func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr error) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
 	// Get ACL in HuJSON format for raw content

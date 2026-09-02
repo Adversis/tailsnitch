@@ -63,8 +63,11 @@ func (k keyInfo) label() string {
 	return k.ID
 }
 
-// Audit performs authentication-related security checks
-func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// Audit performs authentication-related security checks. policy and
+// policyParsed are the tailnet's pre-fetched ACL policy, and devices is the
+// tailnet's device inventory; both are shared from Auditor.Run and unused
+// until the auth-key findings are annotated with device reach.
+func (a *AuthAuditor) Audit(ctx context.Context, policy ACLPolicy, policyParsed bool, devices []*client.Device) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
 	// Get the tailnet's machine auth keys. The keys endpoint also returns API
