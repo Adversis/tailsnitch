@@ -65,6 +65,7 @@ func NewCheckRegistry() *CheckRegistry {
 		{ID: "AUTH-002", Title: "Auth keys with long expiry period", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
 		{ID: "AUTH-003", Title: "Pre-authorized auth keys bypass device approval", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "AUTH-004", Title: "Non-ephemeral keys may be used for CI/CD", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
+		{ID: "AUTH-005", Title: "Workload identity federation not in use", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
 
 		// Device checks - CC6.1 (Logical Access), CC6.3 (Access Removal), CC7.1 (System Operations)
 		{ID: "DEV-001", Title: "Tagged devices with key expiry disabled", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC6.3"}},

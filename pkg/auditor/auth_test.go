@@ -316,3 +316,59 @@ func TestNewKeyInfoProjectsCapabilities(t *testing.T) {
 		t.Errorf("newKeyInfo() DaysToExpiry = %d, want 1", got.DaysToExpiry)
 	}
 }
+
+func TestCheckFederationInUse(t *testing.T) {
+	candidate := keyInfo{
+		ID: "k1", Description: "ci-runner",
+		Reusable: true, Ephemeral: false,
+		Tags: []string{"tag:ci"}, DaysToExpiry: 341,
+	}
+	oneOff := keyInfo{ID: "k2", Reusable: false, Tags: []string{"tag:ci"}, DaysToExpiry: 7}
+	untagged := keyInfo{ID: "k3", Reusable: true, DaysToExpiry: 30}
+	expired := keyInfo{ID: "k4", Reusable: true, Tags: []string{"tag:old"}, DaysToExpiry: -3}
+
+	a := &AuthAuditor{}
+
+	t.Run("no candidates passes", func(t *testing.T) {
+		f := a.checkFederationInUse([]keyInfo{oneOff, untagged, expired}, nil)
+		if !f.Pass {
+			t.Errorf("expected pass with no migration candidates, got %+v", f.Details)
+		}
+	})
+
+	t.Run("candidates and no federation fails medium", func(t *testing.T) {
+		f := a.checkFederationInUse([]keyInfo{candidate}, nil)
+		if f.Pass {
+			t.Error("expected fail when a reusable tagged key has no federation")
+		}
+		if f.Severity != types.Medium {
+			t.Errorf("Severity = %s, want MEDIUM", f.Severity)
+		}
+	})
+
+	t.Run("covered tag passes", func(t *testing.T) {
+		identities := []client.Key{{ID: "f1", Tags: []string{"tag:ci"}}}
+		f := a.checkFederationInUse([]keyInfo{candidate}, identities)
+		if !f.Pass {
+			t.Errorf("expected pass when the tag is covered, got %+v", f.Details)
+		}
+	})
+
+	t.Run("uncovered tag fails low", func(t *testing.T) {
+		identities := []client.Key{{ID: "f1", Tags: []string{"tag:other"}}}
+		f := a.checkFederationInUse([]keyInfo{candidate}, identities)
+		if f.Pass {
+			t.Error("expected fail when the candidate's tag is not covered")
+		}
+		if f.Severity != types.Low {
+			t.Errorf("Severity = %s, want LOW", f.Severity)
+		}
+	})
+
+	t.Run("expired key is not a candidate", func(t *testing.T) {
+		f := a.checkFederationInUse([]keyInfo{expired}, nil)
+		if !f.Pass {
+			t.Error("an expired key should not be a migration candidate")
+		}
+	})
+}

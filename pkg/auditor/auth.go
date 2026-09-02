@@ -15,7 +15,7 @@ type AuthAuditor struct {
 }
 
 // authKeyChecks are the checks that read the tailnet's machine auth keys.
-var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004"}
+var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005"}
 
 // NewAuthAuditor creates a new auth auditor
 func NewAuthAuditor(c *client.Client) *AuthAuditor {
@@ -107,6 +107,17 @@ func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 
 	// AUTH-004: Informational - ephemeral key usage
 	findings = append(findings, a.checkEphemeralKeyUsage(keys))
+
+	// AUTH-005: Workload identity federation not in use. Federated identities
+	// come from the same keys endpoint as auth keys, so a fetch failure here
+	// is reported the same way as an auth key read failure.
+	identities, idErr := a.client.GetFederatedIdentities(ctx)
+	if idErr != nil {
+		findings = append(findings, types.NotEvaluated("AUTH-005",
+			"The tailnet's federated identities could not be read. See AUTH-ERR for the error."))
+	} else {
+		findings = append(findings, a.checkFederationInUse(keys, identities))
+	}
 
 	return findings, nil
 }
@@ -291,5 +302,72 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 		}
 	}
 
+	return finding
+}
+
+// isMigrationCandidate reports whether a key is the kind of long-lived workload
+// credential that workload identity federation replaces: reusable, not
+// ephemeral, carrying tags, and still valid.
+func (k keyInfo) isMigrationCandidate() bool {
+	return k.Reusable && !k.Ephemeral && len(k.Tags) > 0 && k.DaysToExpiry >= 0
+}
+
+func (a *AuthAuditor) checkFederationInUse(keys []keyInfo, identities []client.Key) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "AUTH-005",
+		Title:       "Workload identity federation not in use",
+		Severity:    types.Medium,
+		Category:    types.Authentication,
+		Description: "Workload identity federation lets a CI job prove its cloud identity with a short-lived OIDC token, so there is no long-lived key to store or leak.",
+		Remediation: "Create a trust credential for each CI workload and remove the static auth key it replaces. Pin the subject to a specific workload rather than a wildcard.",
+		Source:      "https://tailscale.com/docs/features/workload-identity-federation",
+		Pass:        true,
+	}
+
+	covered := make(map[string]bool)
+	for _, id := range identities {
+		for _, tag := range id.Tags {
+			covered[tag] = true
+		}
+	}
+
+	var details []string
+	uncovered := false
+	for _, key := range keys {
+		if !key.isMigrationCandidate() {
+			continue
+		}
+		var missing []string
+		for _, tag := range key.Tags {
+			if !covered[tag] {
+				missing = append(missing, tag)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		uncovered = true
+		details = append(details, fmt.Sprintf("%s: reusable, expires in %d days, mints %v with no trust credential",
+			key.label(), key.DaysToExpiry, missing))
+	}
+
+	if !uncovered {
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Details = details
+	if len(identities) == 0 {
+		finding.Description = fmt.Sprintf("Found %d reusable auth key(s) provisioning tagged workloads, and no trust credentials at all. A key like this is what an attacker reads out of a secret store and reuses to enroll nodes.", len(details))
+	} else {
+		finding.Severity = types.Low
+		finding.Description = fmt.Sprintf("Trust credentials exist, but %d reusable auth key(s) still mint tags that none of them cover.", len(details))
+	}
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Create a trust credential for these workloads, then delete the static key",
+		AdminURL:    "https://login.tailscale.com/admin/settings/keys",
+		DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
+	}
 	return finding
 }
