@@ -1,6 +1,7 @@
 package auditor
 
 import (
+	"net/netip"
 	"strings"
 
 	"github.com/Adversis/tailsnitch/pkg/client"
@@ -85,4 +86,58 @@ func splitDst(dst string) (target string, ports string) {
 		return dst, ""
 	}
 	return dst[:idx], candidate
+}
+
+// isDefaultRoute reports whether a route covers all egress, which is what makes
+// a device an exit node.
+func isDefaultRoute(route string) bool {
+	return route == "0.0.0.0/0" || route == "::/0"
+}
+
+// routersFor returns the devices that forward traffic to cidr, by matching it
+// against each device's approved routes.
+//
+// A device is a router for cidr when one of its enabled routes covers cidr.
+// Enabled routes are the approved ones; a merely advertised route forwards
+// nothing, so it is ignored here. NET-003 reports advertised-but-unapproved
+// routes separately.
+func routersFor(cidr string, devices []*client.Device) []*client.Device {
+	want, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return nil
+	}
+
+	var routers []*client.Device
+	for _, d := range devices {
+		for _, route := range d.EnabledRoutes {
+			if isDefaultRoute(route) {
+				continue // exit-node egress, reported separately
+			}
+			have, err := netip.ParsePrefix(route)
+			if err != nil {
+				continue
+			}
+			// have covers want when it contains want's address and is no more
+			// specific than want.
+			if have.Bits() <= want.Bits() && have.Contains(want.Addr()) {
+				routers = append(routers, d)
+				break
+			}
+		}
+	}
+	return routers
+}
+
+// exitNodes returns the devices approved to carry all egress traffic.
+func exitNodes(devices []*client.Device) []*client.Device {
+	var nodes []*client.Device
+	for _, d := range devices {
+		for _, route := range d.EnabledRoutes {
+			if isDefaultRoute(route) {
+				nodes = append(nodes, d)
+				break
+			}
+		}
+	}
+	return nodes
 }

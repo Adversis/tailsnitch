@@ -1,6 +1,10 @@
 package auditor
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Adversis/tailsnitch/pkg/client"
+)
 
 func TestTagMatchesSource(t *testing.T) {
 	tests := []struct {
@@ -61,5 +65,58 @@ func TestSplitDst(t *testing.T) {
 					tt.dst, target, ports, tt.wantTarget, tt.wantPorts)
 			}
 		})
+	}
+}
+
+func dev(name string, enabled, advertised []string) *client.Device {
+	d := &client.Device{}
+	d.Name = name
+	d.EnabledRoutes = enabled
+	d.AdvertisedRoutes = advertised
+	return d
+}
+
+func TestRoutersFor(t *testing.T) {
+	gw := dev("prod-gw", []string{"10.0.0.0/8"}, []string{"10.0.0.0/8"})
+	// Advertises but is not approved: forwards nothing.
+	pending := dev("pending-gw", nil, []string{"192.168.0.0/16"})
+	plain := dev("web-01", nil, nil)
+	devices := []*client.Device{gw, pending, plain}
+
+	tests := []struct {
+		name string
+		cidr string
+		want []string
+	}{
+		{"exact route match", "10.0.0.0/8", []string{"prod-gw"}},
+		{"subnet inside an enabled route", "10.1.2.0/24", []string{"prod-gw"}},
+		{"advertised but not enabled", "192.168.0.0/16", nil},
+		{"nothing routes it", "172.16.0.0/12", nil},
+		{"not a cidr", "tag:prod", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := routersFor(tt.cidr, devices)
+			if len(got) != len(tt.want) {
+				t.Fatalf("routersFor(%q) returned %d routers, want %d", tt.cidr, len(got), len(tt.want))
+			}
+			for i, r := range got {
+				if r.Name != tt.want[i] {
+					t.Errorf("router %d = %q, want %q", i, r.Name, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestExitNodes(t *testing.T) {
+	exit := dev("edge-01", []string{"0.0.0.0/0", "::/0"}, nil)
+	gw := dev("prod-gw", []string{"10.0.0.0/8"}, nil)
+	plain := dev("web-01", nil, nil)
+
+	got := exitNodes([]*client.Device{exit, gw, plain})
+	if len(got) != 1 || got[0].Name != "edge-01" {
+		t.Errorf("exitNodes = %v, want [edge-01]", got)
 	}
 }
