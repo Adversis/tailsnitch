@@ -2,6 +2,8 @@ package auditor
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/tailscale/hujson"
 
@@ -10,6 +12,24 @@ import (
 	"github.com/Adversis/tailsnitch/pkg/client"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
+
+// detailsContain reports whether any line in a finding's Details contains
+// substr. Details is typed interface{} because some checks report it as a
+// plain string; ACL-011 always reports []string. Used to assert on the reach
+// table describeReach produces, which is the informational payload ACL-011
+// exists to deliver.
+func detailsContain(details interface{}, substr string) bool {
+	lines, ok := details.([]string)
+	if !ok {
+		return false
+	}
+	for _, d := range lines {
+		if strings.Contains(d, substr) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestCheckAllowAll(t *testing.T) {
 	a := &ACLAuditor{}
@@ -542,6 +562,15 @@ func TestCheckTagReach(t *testing.T) {
 		if f.Pass || f.Severity != types.High {
 			t.Errorf("want fail HIGH, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
+		// The reach table is the check's informational payload even on a
+		// failing result: describeReach must have run and named the tag, and
+		// must say the minting key is reusable specifically.
+		if !detailsContain(f.Details, "tag:ci: reaches every device in the tailnet (a rule grants *:*)") {
+			t.Errorf("Details does not contain a reach line naming tag:ci: %v", f.Details)
+		}
+		if !detailsContain(f.Details, "a reusable auth key can assign this tag") {
+			t.Errorf("Details should say a reusable auth key can assign tag:ci: %v", f.Details)
+		}
 	})
 
 	t.Run("broad tag no key can mint stays informational", func(t *testing.T) {
@@ -552,6 +581,9 @@ func TestCheckTagReach(t *testing.T) {
 		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
 		if !f.Pass {
 			t.Error("a broad tag that no auth key can mint must not fail")
+		}
+		if f.Severity != types.Informational {
+			t.Errorf("Severity = %s, want INFO for a tag no key can mint", f.Severity)
 		}
 	})
 
@@ -573,7 +605,7 @@ func TestCheckTagReach(t *testing.T) {
 		}
 		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
 		if !f.Pass {
-			t.Errorf("a tag reaching two devices on one port should not fail: %+v", f.Details)
+			t.Errorf("a tag reaching one device on one port should not fail: %+v", f.Details)
 		}
 	})
 
@@ -588,6 +620,12 @@ func TestCheckTagReach(t *testing.T) {
 		}
 		if f.Severity != types.Informational {
 			t.Errorf("Severity = %s, want INFO when mintability is unknown", f.Severity)
+		}
+		// The fix here is the credential's read scope, not the ACL rules -
+		// Remediation must point at that instead of the generic "narrow the
+		// rules" advice, which would tell the user to fix the wrong thing.
+		if !strings.Contains(f.Remediation, "auth_keys:read") {
+			t.Errorf("Remediation = %q, want guidance to grant auth_keys:read", f.Remediation)
 		}
 	})
 
@@ -608,6 +646,15 @@ func TestCheckTagReach(t *testing.T) {
 		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil)
 		if f.Pass || f.Severity != types.Medium {
 			t.Errorf("want fail MEDIUM for a one-off key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+		if !detailsContain(f.Details, "tag:ci: reaches every device in the tailnet (a rule grants *:*)") {
+			t.Errorf("Details does not contain a reach line naming tag:ci: %v", f.Details)
+		}
+		if !detailsContain(f.Details, "an auth key can assign this tag") {
+			t.Errorf("Details should say an auth key can assign tag:ci: %v", f.Details)
+		}
+		if detailsContain(f.Details, "a reusable auth key can assign this tag") {
+			t.Errorf("a one-off key must not be described as reusable: %v", f.Details)
 		}
 	})
 
@@ -645,6 +692,34 @@ func TestCheckTagReach(t *testing.T) {
 		f := a.checkTagReach(policy, devicesWithExit, []client.Key{reusableCIKey}, nil)
 		if f.Pass || f.Severity != types.High {
 			t.Errorf("want fail HIGH for internet egress minted by a reusable key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
+
+	// Severity must never derive from a device count - only from whether reach
+	// crosses a structural boundary (wildcard, routed CIDR, or exit-node
+	// egress). "narrow mintable tag passes" reaches only one device, so it
+	// would not catch a future `if len(r.Devices) > N { sev = High }` inserted
+	// into the severity path. This reaches many devices, on specific ports,
+	// with none of the three boundary crossings present, and must still pass
+	// as informational regardless of how many devices that is.
+	t.Run("mintable tag reaching many devices on specific ports stays informational", func(t *testing.T) {
+		manyDevices := make([]*client.Device, 0, 6)
+		for i := 0; i < 6; i++ {
+			d := &client.Device{}
+			d.Name = fmt.Sprintf("prod-%02d", i)
+			d.Tags = []string{"tag:prod"}
+			manyDevices = append(manyDevices, d)
+		}
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+		}
+		f := a.checkTagReach(policy, manyDevices, []client.Key{reusableCIKey}, nil)
+		if !f.Pass {
+			t.Errorf("reaching many devices on a specific port is not a boundary crossing and should not fail: %+v", f.Details)
+		}
+		if f.Severity != types.Informational {
+			t.Errorf("Severity = %s, want INFO regardless of device count", f.Severity)
 		}
 	})
 }

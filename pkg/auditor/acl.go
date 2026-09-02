@@ -941,6 +941,7 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 	if keysErr != nil {
 		finding.Pass = false
 		finding.Description = "Tag reach was computed, but the auth keys could not be read, so it is unknown which tags a key can assign."
+		finding.Remediation = "Grant the credential the auth_keys:read scope, then re-run the audit to determine which tags an auth key can assign."
 		finding.Details = append([]string{
 			fmt.Sprintf("Could not read auth keys: %v", keysErr),
 			"MANUAL CHECK REQUIRED: confirm which of these tags an auth key can assign.",
