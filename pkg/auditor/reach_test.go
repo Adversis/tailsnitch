@@ -33,3 +33,33 @@ func TestTagMatchesSource(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitDst(t *testing.T) {
+	tests := []struct {
+		name       string
+		dst        string
+		wantTarget string
+		wantPorts  string
+	}{
+		{"tag with port", "tag:prod:22", "tag:prod", "22"},
+		{"tag all ports", "tag:prod:*", "tag:prod", "*"},
+		{"wildcard both", "*:*", "*", "*"},
+		{"cidr with ports", "10.0.0.0/8:*", "10.0.0.0/8", "*"},
+		{"port range", "tag:prod:8000-9000", "tag:prod", "8000-9000"},
+		{"port list", "tag:prod:80,443", "tag:prod", "80,443"},
+		{"user with port", "someone@example.com:22", "someone@example.com", "22"},
+		{"no port suffix (grant form)", "tag:prod", "tag:prod", ""},
+		{"bare wildcard (grant form)", "*", "*", ""},
+		{"autogroup internet", "autogroup:internet:*", "autogroup:internet", "*"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, ports := splitDst(tt.dst)
+			if target != tt.wantTarget || ports != tt.wantPorts {
+				t.Errorf("splitDst(%q) = (%q, %q), want (%q, %q)",
+					tt.dst, target, ports, tt.wantTarget, tt.wantPorts)
+			}
+		})
+	}
+}
