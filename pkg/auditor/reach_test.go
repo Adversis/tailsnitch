@@ -240,4 +240,128 @@ func TestComputeReach(t *testing.T) {
 			t.Error("a grant with no ip restriction should reach all ports")
 		}
 	})
+
+	t.Run("port then all-ports merges to all-ports with no stale ports", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}},
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:*"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Devices) != 2 {
+			t.Fatalf("reached %d devices, want 2", len(r.Devices))
+		}
+		for _, d := range r.Devices {
+			if !d.AllPorts {
+				t.Errorf("device %s: AllPorts = false, want true", d.Device.Name)
+			}
+			if len(d.Ports) != 0 {
+				t.Errorf("device %s: Ports = %v, want none once AllPorts is true", d.Device.Name, d.Ports)
+			}
+		}
+	})
+
+	t.Run("all-ports then port stays all-ports with no stale ports", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:*"}},
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Devices) != 2 {
+			t.Fatalf("reached %d devices, want 2", len(r.Devices))
+		}
+		for _, d := range r.Devices {
+			if !d.AllPorts {
+				t.Errorf("device %s: AllPorts = false, want true", d.Device.Name)
+			}
+			if len(d.Ports) != 0 {
+				t.Errorf("device %s: Ports = %v, want none once AllPorts is true", d.Device.Name, d.Ports)
+			}
+		}
+	})
+
+	t.Run("two rules naming autogroup:internet count each exit node once", func(t *testing.T) {
+		exit := dev("edge-01", []string{"0.0.0.0/0", "::/0"}, nil)
+		devicesWithExit := make([]*client.Device, 0, len(devices)+1)
+		devicesWithExit = append(devicesWithExit, devices...)
+		devicesWithExit = append(devicesWithExit, exit)
+
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"autogroup:internet:*"}},
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"autogroup:internet:443"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devicesWithExit)
+		if len(r.Egress) != 1 || r.Egress[0].Name != "edge-01" {
+			t.Errorf("Egress = %v, want [edge-01] exactly once", r.Egress)
+		}
+	})
+
+	t.Run("two rules naming the same routed cidr produce one RoutedReach", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:22"}},
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:443"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Routed) != 1 || r.Routed[0].Router.Name != "prod-gw" {
+			t.Errorf("Routed = %+v, want exactly one entry via prod-gw", r.Routed)
+		}
+	})
+}
+
+func TestAllTagReach(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+
+	db := &client.Device{}
+	db.Name = "db-01"
+	db.Tags = []string{"tag:prod"}
+
+	gw := dev("prod-gw", []string{"10.0.0.0/8"}, nil)
+	gw.Tags = []string{"tag:infra"}
+
+	devices := []*client.Device{web, db, gw}
+
+	policy := ACLPolicy{
+		TagOwners: map[string][]string{
+			"tag:zeta":  nil,
+			"tag:alpha": nil,
+			"tag:beta":  nil,
+			"tag:gamma": nil,
+			"tag:delta": nil,
+		},
+		ACLs: []ACLRule{
+			// Wildcard: reaches everything, sorts first regardless of count.
+			{Action: "accept", Src: []string{"tag:zeta"}, Dst: []string{"*:*"}},
+			// Reaches 2 devices.
+			{Action: "accept", Src: []string{"tag:alpha"}, Dst: []string{"tag:prod:22"}},
+			// Reaches 1 device.
+			{Action: "accept", Src: []string{"tag:beta"}, Dst: []string{"tag:infra:22"}},
+			// tag:gamma and tag:delta reach nothing and tie on device count,
+			// so they fall back to alphabetical order.
+		},
+	}
+
+	reaches := AllTagReach(policy, devices)
+	if len(reaches) != 5 {
+		t.Fatalf("AllTagReach returned %d reaches, want 5", len(reaches))
+	}
+
+	var got []string
+	for _, r := range reaches {
+		got = append(got, r.Tag)
+	}
+	want := []string{"tag:zeta", "tag:alpha", "tag:beta", "tag:delta", "tag:gamma"}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("AllTagReach order = %v, want %v", got, want)
+		}
+	}
 }

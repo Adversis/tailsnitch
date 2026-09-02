@@ -150,13 +150,16 @@ func allPorts(ports string) bool {
 }
 
 // addDevice records reach to one device, merging with an existing entry so a
-// device reachable through two rules is counted once.
+// device reachable through two rules is counted once. Once a device is known
+// to be reachable on all ports, any specific ports recorded for it are stale
+// and are cleared rather than left to understate the reach.
 func (r *Reach) addDevice(d *client.Device, ports string) {
 	for i := range r.Devices {
 		if r.Devices[i].Device == d {
 			if allPorts(ports) {
 				r.Devices[i].AllPorts = true
-			} else {
+				r.Devices[i].Ports = nil
+			} else if !r.Devices[i].AllPorts {
 				r.Devices[i].Ports = append(r.Devices[i].Ports, ports)
 			}
 			return
@@ -169,6 +172,30 @@ func (r *Reach) addDevice(d *client.Device, ports string) {
 	r.Devices = append(r.Devices, dr)
 }
 
+// addEgress records reach to autogroup:internet via one exit node, merging
+// with an existing entry so a node reachable through two rules is counted
+// once.
+func (r *Reach) addEgress(node *client.Device) {
+	for _, existing := range r.Egress {
+		if existing == node {
+			return
+		}
+	}
+	r.Egress = append(r.Egress, node)
+}
+
+// addRouted records routed reach to a CIDR via one router, merging with an
+// existing entry so a CIDR-router pair reachable through two rules is
+// counted once.
+func (r *Reach) addRouted(cidr string, router *client.Device) {
+	for _, existing := range r.Routed {
+		if existing.CIDR == cidr && existing.Router == router {
+			return
+		}
+	}
+	r.Routed = append(r.Routed, RoutedReach{CIDR: cidr, Router: router})
+}
+
 // expandTarget resolves one destination target into the reach it grants.
 func (r *Reach) expandTarget(target, ports string, policy ACLPolicy, devices []*client.Device) {
 	switch {
@@ -179,7 +206,9 @@ func (r *Reach) expandTarget(target, ports string, policy ACLPolicy, devices []*
 		return
 
 	case target == "autogroup:internet":
-		r.Egress = append(r.Egress, exitNodes(devices)...)
+		for _, node := range exitNodes(devices) {
+			r.addEgress(node)
+		}
 		return
 
 	case strings.HasPrefix(target, "tag:"):
@@ -239,7 +268,7 @@ func (r *Reach) expandTarget(target, ports string, policy ACLPolicy, devices []*
 			return
 		}
 		for _, router := range routers {
-			r.Routed = append(r.Routed, RoutedReach{CIDR: target, Router: router})
+			r.addRouted(target, router)
 		}
 		return
 	}
