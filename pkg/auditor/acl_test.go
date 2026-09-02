@@ -3,6 +3,8 @@ package auditor
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -558,7 +560,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, nil)
 		if f.Pass || f.Severity != types.High {
 			t.Errorf("want fail HIGH, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
@@ -578,7 +580,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:monitoring": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:monitoring"}, Dst: []string{"*:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, nil)
 		if !f.Pass {
 			t.Error("a broad tag that no auth key can mint must not fail")
 		}
@@ -592,7 +594,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, nil)
 		if f.Pass {
 			t.Error("reaching a routed subnet crosses the tailnet boundary and must fail")
 		}
@@ -603,7 +605,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, nil)
 		if !f.Pass {
 			t.Errorf("a tag reaching one device on one port should not fail: %+v", f.Details)
 		}
@@ -614,7 +616,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, nil, errors.New("403"))
+		f := a.checkTagReach(policy, devices, nil, errors.New("403"), nil)
 		if f.Pass {
 			t.Error("mintability unknown must not report as a satisfied control")
 		}
@@ -643,7 +645,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil, nil)
 		if f.Pass || f.Severity != types.Medium {
 			t.Errorf("want fail MEDIUM for a one-off key, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
@@ -663,7 +665,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, nil)
 		if f.Pass || f.Severity != types.High {
 			t.Errorf("want fail HIGH for a routed cidr minted by a reusable key, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
@@ -676,7 +678,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
 		}
-		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil)
+		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil, nil)
 		if f.Pass || f.Severity != types.Medium {
 			t.Errorf("want fail MEDIUM for a routed cidr minted by a one-off key, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
@@ -689,7 +691,7 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"autogroup:internet:*"}}},
 		}
-		f := a.checkTagReach(policy, devicesWithExit, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, devicesWithExit, []client.Key{reusableCIKey}, nil, nil)
 		if f.Pass || f.Severity != types.High {
 			t.Errorf("want fail HIGH for internet egress minted by a reusable key, got pass=%v severity=%s", f.Pass, f.Severity)
 		}
@@ -714,12 +716,136 @@ func TestCheckTagReach(t *testing.T) {
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
 		}
-		f := a.checkTagReach(policy, manyDevices, []client.Key{reusableCIKey}, nil)
+		f := a.checkTagReach(policy, manyDevices, []client.Key{reusableCIKey}, nil, nil)
 		if !f.Pass {
 			t.Errorf("reaching many devices on a specific port is not a boundary crossing and should not fail: %+v", f.Details)
 		}
 		if f.Severity != types.Informational {
 			t.Errorf("Severity = %s, want INFO regardless of device count", f.Severity)
+		}
+	})
+}
+
+// ignoreListFor loads an ignore file naming ACL-011 items, e.g.
+// "tag:monitoring" or "tag:monitoring\ntag:backup". types.IgnoreList's fields
+// are unexported, so a real file is the only way to build one from this
+// package - the same thing cmd/root.go does for a real run.
+func ignoreListFor(t *testing.T, items ...string) *types.IgnoreList {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".tailsnitch-ignore")
+	var content strings.Builder
+	for _, item := range items {
+		fmt.Fprintf(&content, "ACL-011:%s\n", item)
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	il, err := types.LoadIgnoreFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return il
+}
+
+// TestCheckTagReachPerItemIgnore covers the wiring required beyond the
+// brief: ACL-011 must consult IsItemIgnored while building its per-tag
+// detail lines, and suppressing the only offending tag must not turn the
+// check into a satisfied control.
+func TestCheckTagReachPerItemIgnore(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+	devices := []*client.Device{web}
+
+	reusableCIKey := client.Key{ID: "k1", KeyType: client.KeyTypeAuth}
+	reusableCIKey.Capabilities.Devices.Create.Reusable = true
+	reusableCIKey.Capabilities.Devices.Create.Tags = []string{"tag:ci", "tag:monitoring"}
+
+	a := &ACLAuditor{}
+
+	t.Run("a suppressed tag does not appear in the reach table", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil, "tag:monitoring": nil},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}},
+				{Action: "accept", Src: []string{"tag:monitoring"}, Dst: []string{"*:*"}},
+			},
+		}
+		il := ignoreListFor(t, "tag:monitoring")
+
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, il)
+
+		if detailsContain(f.Details, "tag:monitoring") {
+			t.Errorf("a suppressed tag must not appear in the reach table: %v", f.Details)
+		}
+		if !detailsContain(f.Details, "tag:ci") {
+			t.Errorf("an unsuppressed tag must still appear in the reach table: %v", f.Details)
+		}
+	})
+
+	t.Run("suppressing the only offending tag stays failed, not passing", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:monitoring": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:monitoring"}, Dst: []string{"*:*"}}},
+		}
+		il := ignoreListFor(t, "tag:monitoring")
+
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, il)
+
+		if f.Pass {
+			t.Error("SECURITY: suppressing the only offending tag must not flip Pass to true - " +
+				"that would let an ignore file turn a real gap green")
+		}
+		if f.Severity != types.Informational {
+			t.Errorf("Severity = %s, want INFO once the only offender is suppressed", f.Severity)
+		}
+		if f.Fix != nil {
+			t.Errorf("Fix = %+v, want none once the only offender is suppressed (nothing actionable remains)", f.Fix)
+		}
+	})
+
+	t.Run("suppressing a tag that never offended leaves the check clean", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+		}
+		il := ignoreListFor(t, "tag:ci")
+
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil, il)
+
+		if !f.Pass {
+			t.Errorf("suppressing a tag that was never an offender must not change a clean result: %+v", f)
+		}
+		if f.Severity != types.Informational {
+			t.Errorf("Severity = %s, want INFO for a clean result", f.Severity)
+		}
+	})
+
+	t.Run("one offender suppressed, another remains: still fails on the unsuppressed one", func(t *testing.T) {
+		reusableBackupKey := client.Key{ID: "k2", KeyType: client.KeyTypeAuth}
+		reusableBackupKey.Capabilities.Devices.Create.Reusable = true
+		reusableBackupKey.Capabilities.Devices.Create.Tags = []string{"tag:ci", "tag:backup"}
+
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil, "tag:backup": nil},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}},
+				{Action: "accept", Src: []string{"tag:backup"}, Dst: []string{"*:*"}},
+			},
+		}
+		il := ignoreListFor(t, "tag:backup")
+
+		f := a.checkTagReach(policy, devices, []client.Key{reusableBackupKey}, nil, il)
+
+		if f.Pass {
+			t.Error("tag:ci still crosses a boundary and is not suppressed; the check must still fail")
+		}
+		if detailsContain(f.Details, "tag:backup") {
+			t.Errorf("the suppressed tag must not appear anywhere in Details: %v", f.Details)
+		}
+		if !detailsContain(f.Details, "tag:ci") {
+			t.Errorf("the unsuppressed offender must still be named: %v", f.Details)
 		}
 	})
 }

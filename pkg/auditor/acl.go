@@ -95,7 +95,7 @@ type AutoApprovers struct {
 // Audit performs ACL-related security checks. devices and devErr are the
 // tailnet's device inventory, pre-fetched once in Auditor.Run and shared with
 // the Auth auditor; ACL-011 consumes them to compute tag reach.
-func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr error) ([]types.Suggestion, error) {
+func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr error, ignoreList *types.IgnoreList) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
 	// Get ACL in HuJSON format for raw content
@@ -178,7 +178,7 @@ func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr
 		findings = append(findings, types.NotEvaluated("ACL-011",
 			fmt.Sprintf("The device inventory could not be read: %v", devErr)))
 	} else {
-		findings = append(findings, a.checkTagReach(policy, devices, keys, keysErr))
+		findings = append(findings, a.checkTagReach(policy, devices, keys, keysErr, ignoreList))
 	}
 
 	return findings, nil
@@ -882,7 +882,7 @@ func describeReach(r Reach, mintable, reusable bool) []string {
 // 47 devices is correct for that tag or catastrophic. Reusability of the
 // minting key is a structural property of the credential and may raise
 // severity from Medium to High.
-func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, keys []client.Key, keysErr error) types.Suggestion {
+func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, keys []client.Key, keysErr error, ignoreList *types.IgnoreList) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "ACL-011",
 		Title:       "Tag reach",
@@ -905,12 +905,19 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 
 	var details []string
 	var offenders []string
+	var suppressedOffenders []string
 	worst := types.Informational
 
 	for _, r := range reaches {
 		isMintable := keysErr == nil && mintable[r.Tag]
 		isReusable := keysErr == nil && reusable[r.Tag]
-		details = append(details, describeReach(r, isMintable, isReusable)...)
+
+		// A tag named in the ignore file is left out of the reach table
+		// entirely, whether or not it turns out to be an offender below.
+		tagIgnored := ignoreList.IsItemIgnored("ACL-011", r.Tag)
+		if !tagIgnored {
+			details = append(details, describeReach(r, isMintable, isReusable)...)
+		}
 
 		if !isMintable {
 			continue
@@ -928,7 +935,16 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 		if len(crossings) == 0 {
 			continue
 		}
-		offenders = append(offenders, fmt.Sprintf("%s: %s", r.Tag, strings.Join(crossings, ", ")))
+		entry := fmt.Sprintf("%s: %s", r.Tag, strings.Join(crossings, ", "))
+		if tagIgnored {
+			// Suppressed: does not count toward severity or Pass. It is
+			// still tracked separately (not silently dropped) so the "every
+			// offender suppressed" case below can be told apart from a
+			// tailnet that genuinely has nothing crossing a boundary.
+			suppressedOffenders = append(suppressedOffenders, entry)
+			continue
+		}
+		offenders = append(offenders, entry)
 		sev := types.Medium
 		if isReusable {
 			sev = types.High
@@ -949,16 +965,39 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 		return finding
 	}
 
-	if len(offenders) == 0 {
+	if len(offenders) == 0 && len(suppressedOffenders) == 0 {
 		finding.Details = details
 		finding.Description = fmt.Sprintf("Reach computed for %d tag(s). No tag that an auth key can assign crosses a trust boundary.", len(reaches))
+		return finding
+	}
+
+	if len(offenders) == 0 {
+		// Every tag that crossed a boundary was suppressed by the ignore
+		// file. Suppressing the last offender must not read as a satisfied
+		// control: the finding stays, at Informational severity and with
+		// Pass still false, as evidence that something was suppressed
+		// rather than disappearing into a clean result.
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = fmt.Sprintf(
+			"%d tag(s) that an auth key can assign crossed a trust boundary; all were suppressed by the ignore file.",
+			len(suppressedOffenders))
+		suppressedNote := []string{fmt.Sprintf("%d tag(s) crossing a boundary were suppressed by the ignore file.", len(suppressedOffenders))}
+		if len(details) > 0 {
+			suppressedNote = append(append(suppressedNote, "", "Reach for every unsuppressed tag:"), details...)
+		}
+		finding.Details = suppressedNote
 		return finding
 	}
 
 	finding.Pass = false
 	finding.Severity = worst
 	finding.Description = fmt.Sprintf("%d tag(s) that an auth key can assign cross a trust boundary.", len(offenders))
-	finding.Details = append(append([]string{"Tags crossing a boundary:"}, offenders...), append([]string{"", "Reach for every tag:"}, details...)...)
+	boundaryLines := append([]string{"Tags crossing a boundary:"}, offenders...)
+	if len(suppressedOffenders) > 0 {
+		boundaryLines = append(boundaryLines, fmt.Sprintf("(%d additional tag(s) crossing a boundary suppressed by the ignore file)", len(suppressedOffenders)))
+	}
+	finding.Details = append(append(boundaryLines, "", "Reach for every tag:"), details...)
 	finding.Fix = &types.FixInfo{
 		Type:        types.FixTypeManual,
 		Description: "Narrow these tags' rules, or replace the auth key that assigns them",
