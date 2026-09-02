@@ -120,3 +120,124 @@ func TestExitNodes(t *testing.T) {
 		t.Errorf("exitNodes = %v, want [edge-01]", got)
 	}
 }
+
+func TestComputeReach(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+
+	db := &client.Device{}
+	db.Name = "db-01"
+	db.Tags = []string{"tag:prod"}
+
+	gw := dev("prod-gw", []string{"10.0.0.0/8"}, nil)
+	gw.Tags = []string{"tag:infra"}
+
+	devices := []*client.Device{web, db, gw}
+
+	t.Run("tag reaches tagged devices on one port", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil, "tag:prod": nil},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if r.Wildcard {
+			t.Error("Wildcard set for a tag-scoped destination")
+		}
+		if len(r.Devices) != 2 {
+			t.Fatalf("reached %d devices, want 2", len(r.Devices))
+		}
+		if r.Devices[0].AllPorts {
+			t.Error("AllPorts set for a destination scoped to port 22")
+		}
+		if r.TotalDevices != 3 {
+			t.Errorf("TotalDevices = %d, want 3", r.TotalDevices)
+		}
+	})
+
+	t.Run("wildcard sets the flag and enumerates nothing", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if !r.Wildcard {
+			t.Error("Wildcard not set for dst *:*")
+		}
+		if len(r.Devices) != 0 {
+			t.Errorf("enumerated %d devices for a wildcard; should enumerate none", len(r.Devices))
+		}
+	})
+
+	t.Run("cidr destination is routed reach, not device reach", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Routed) != 1 || r.Routed[0].Router.Name != "prod-gw" {
+			t.Fatalf("Routed = %+v, want one entry via prod-gw", r.Routed)
+		}
+		if len(r.Devices) != 0 {
+			t.Errorf("a CIDR destination produced %d device reaches; should produce none", len(r.Devices))
+		}
+	})
+
+	t.Run("unrouted cidr is unresolved, not an escalation", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"172.16.0.0/12:*"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Routed) != 0 {
+			t.Errorf("Routed = %+v for a CIDR no device routes", r.Routed)
+		}
+		if len(r.Unresolved) != 1 {
+			t.Errorf("Unresolved = %v, want the unrouted CIDR", r.Unresolved)
+		}
+	})
+
+	t.Run("autogroup source grants the tag nothing", func(t *testing.T) {
+		policy := ACLPolicy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"*:*"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if r.Wildcard || len(r.Devices) != 0 {
+			t.Error("an autogroup:member source granted reach to a tag")
+		}
+	})
+
+	t.Run("grant carries ports in the ip field", func(t *testing.T) {
+		policy := ACLPolicy{
+			Grants: []Grant{
+				{Src: []string{"tag:ci"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:22"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Devices) != 2 {
+			t.Fatalf("reached %d devices, want 2", len(r.Devices))
+		}
+		if r.Devices[0].AllPorts {
+			t.Error("AllPorts set for a grant restricted to tcp:22")
+		}
+	})
+
+	t.Run("grant with no ip field is all ports", func(t *testing.T) {
+		policy := ACLPolicy{
+			Grants: []Grant{
+				{Src: []string{"tag:ci"}, Dst: []string{"tag:prod"}},
+			},
+		}
+		r := ComputeReach("tag:ci", policy, devices)
+		if len(r.Devices) != 2 || !r.Devices[0].AllPorts {
+			t.Error("a grant with no ip restriction should reach all ports")
+		}
+	})
+}
