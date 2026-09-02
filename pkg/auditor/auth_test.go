@@ -391,7 +391,7 @@ func TestCheckFederationInUse(t *testing.T) {
 // fails). The not-evaluated reason for AUTH-005 must therefore name the
 // actual error rather than point at a finding that was never raised.
 func TestFederationFetchFailedNamesTheErrorNotAUTHERR(t *testing.T) {
-	f := federationFetchFailed(errors.New("connection reset by peer"))
+	f := federationFetchFailed("AUTH-005", errors.New("connection reset by peer"))
 
 	if f.Pass {
 		t.Error("expected Pass=false for a not-evaluated finding")
@@ -402,4 +402,130 @@ func TestFederationFetchFailedNamesTheErrorNotAUTHERR(t *testing.T) {
 	if strings.Contains(f.Description, "AUTH-ERR") {
 		t.Errorf("Description = %q, must not reference AUTH-ERR: no such finding is emitted on this path", f.Description)
 	}
+}
+
+func TestSubjectBreadth(t *testing.T) {
+	tests := []struct {
+		subject string
+		want    breadth
+	}{
+		{"", breadthAny},
+		{"*", breadthAny},
+		{"**", breadthAny},
+		{"*:*", breadthAny},
+		{"*/repo:ref:refs/heads/main", breadthLeadingWildcard},
+		{"repo:org/*", breadthTrailingWildcard},
+		{"repo:org/repo:*", breadthTrailingWildcard},
+		{"repo:org/repo:ref:refs/heads/main", breadthPinned},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subject, func(t *testing.T) {
+			if got := subjectBreadth(tt.subject); got != tt.want {
+				t.Errorf("subjectBreadth(%q) = %v, want %v", tt.subject, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckFederatedIdentityConfig(t *testing.T) {
+	a := &AuthAuditor{}
+
+	t.Run("no identities passes", func(t *testing.T) {
+		if f := a.checkFederatedIdentityConfig(nil); !f.Pass {
+			t.Error("expected pass with no federated identities")
+		}
+	})
+
+	t.Run("pinned subject passes", func(t *testing.T) {
+		ids := []client.Key{{
+			ID: "f1", Issuer: "token.actions.githubusercontent.com",
+			Subject: "repo:org/repo:ref:refs/heads/main", Audience: "tailscale",
+		}}
+		if f := a.checkFederatedIdentityConfig(ids); !f.Pass {
+			t.Errorf("expected pass for a pinned subject, got %+v", f.Details)
+		}
+	})
+
+	t.Run("wildcard subject fails high", func(t *testing.T) {
+		ids := []client.Key{{ID: "f1", Issuer: "token.actions.githubusercontent.com", Subject: "*"}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Pass {
+			t.Error("expected fail for a whole-subject wildcard")
+		}
+		if f.Severity != types.High {
+			t.Errorf("Severity = %s, want HIGH", f.Severity)
+		}
+	})
+
+	t.Run("unknown issuer gets the same verdict", func(t *testing.T) {
+		ids := []client.Key{{ID: "f1", Issuer: "oidc.example.invalid", Subject: "*"}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Pass || f.Severity != types.High {
+			t.Error("an unknown issuer must not change the verdict")
+		}
+	})
+
+	t.Run("trailing wildcard reports without failing high", func(t *testing.T) {
+		ids := []client.Key{{ID: "f1", Subject: "repo:org/*", Audience: "tailscale"}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Severity == types.High {
+			t.Error("a trailing wildcard should not be rated HIGH")
+		}
+	})
+
+	// The two cases below isolate the switch branches in
+	// checkFederatedIdentityConfig from the CustomClaimRules supporting-fact
+	// note: both Audience and CustomClaimRules are set here, so the only way
+	// either identity is flagged at all is via the wildcard-position switch
+	// itself. Without these, deleting a case arm (e.g. the
+	// breadthLeadingWildcard arm) would leave every other test passing,
+	// because the trailing-wildcard case above still has an empty
+	// CustomClaimRules and gets flagged through the supporting-fact note
+	// regardless of the switch.
+	t.Run("leading wildcard is flagged by the switch alone", func(t *testing.T) {
+		ids := []client.Key{{
+			ID: "f1", Subject: "*/repo:ref:refs/heads/main",
+			Audience: "tailscale", CustomClaimRules: map[string]string{"repository": "org/repo"},
+		}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Pass {
+			t.Error("expected fail for a leading-wildcard subject")
+		}
+		if f.Severity == types.High {
+			t.Error("a leading wildcard should not be rated HIGH")
+		}
+	})
+
+	t.Run("trailing wildcard is flagged by the switch alone", func(t *testing.T) {
+		ids := []client.Key{{
+			ID: "f1", Subject: "repo:org/*",
+			Audience: "tailscale", CustomClaimRules: map[string]string{"repository": "org/repo"},
+		}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Pass {
+			t.Error("expected fail for a trailing-wildcard subject")
+		}
+		if f.Severity == types.High {
+			t.Error("a trailing wildcard should not be rated HIGH")
+		}
+	})
+
+	// Isolates the empty-audience supporting fact from the wildcard-subject
+	// switch: subject is pinned and claim rules are set, so the audience note
+	// is the only thing that can fail this check. Confirms a missing
+	// audience alone reports without escalating to HIGH.
+	t.Run("missing audience alone is low, not high", func(t *testing.T) {
+		ids := []client.Key{{
+			ID: "f1", Subject: "repo:org/repo:ref:refs/heads/main",
+			CustomClaimRules: map[string]string{"repository": "org/repo"},
+		}}
+		f := a.checkFederatedIdentityConfig(ids)
+		if f.Pass {
+			t.Error("expected fail: a missing audience should still be reported")
+		}
+		if f.Severity != types.Low {
+			t.Errorf("Severity = %s, want LOW; a missing audience alone must not escalate to HIGH", f.Severity)
+		}
+	})
 }

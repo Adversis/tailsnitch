@@ -3,6 +3,7 @@ package auditor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Adversis/tailsnitch/pkg/client"
@@ -15,7 +16,7 @@ type AuthAuditor struct {
 }
 
 // authKeyChecks are the checks that read the tailnet's machine auth keys.
-var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005"}
+var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005", "AUTH-006"}
 
 // NewAuthAuditor creates a new auth auditor
 func NewAuthAuditor(c *client.Client) *AuthAuditor {
@@ -108,14 +109,17 @@ func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// AUTH-004: Informational - ephemeral key usage
 	findings = append(findings, a.checkEphemeralKeyUsage(keys))
 
-	// AUTH-005: Workload identity federation not in use. Federated identities
-	// come from the same keys endpoint as auth keys, so a fetch failure here
-	// is reported as not-evaluated, same as an auth key read failure.
+	// AUTH-005 and AUTH-006: workload identity federation not in use, and
+	// federated identity subject breadth. Federated identities come from the
+	// same keys endpoint as auth keys, so a fetch failure here is reported as
+	// not-evaluated for both checks, same as an auth key read failure.
 	identities, idErr := a.client.GetFederatedIdentities(ctx)
 	if idErr != nil {
-		findings = append(findings, federationFetchFailed(idErr))
+		findings = append(findings, federationFetchFailed("AUTH-005", idErr))
+		findings = append(findings, federationFetchFailed("AUTH-006", idErr))
 	} else {
 		findings = append(findings, a.checkFederationInUse(keys, identities))
+		findings = append(findings, a.checkFederatedIdentityConfig(identities))
 	}
 
 	return findings, nil
@@ -311,13 +315,13 @@ func (k keyInfo) isMigrationCandidate() bool {
 	return k.Reusable && !k.Ephemeral && len(k.Tags) > 0 && k.DaysToExpiry >= 0
 }
 
-// federationFetchFailed builds the AUTH-005 not-evaluated finding for a
-// failure to read the tailnet's federated identities. Unlike the auth-keys
-// read failure above, no AUTH-ERR finding is emitted on this path, so the
-// reason must carry the error itself rather than point at a finding that was
-// never raised.
-func federationFetchFailed(err error) types.Suggestion {
-	return types.NotEvaluated("AUTH-005",
+// federationFetchFailed builds the not-evaluated finding for a failure to
+// read the tailnet's federated identities, for either AUTH-005 or AUTH-006 -
+// both depend on the same fetch. Unlike the auth-keys read failure above, no
+// AUTH-ERR finding is emitted on this path, so the reason must carry the
+// error itself rather than point at a finding that was never raised.
+func federationFetchFailed(id string, err error) types.Suggestion {
+	return types.NotEvaluated(id,
 		fmt.Sprintf("The tailnet's federated identities could not be read: %v", err))
 }
 
@@ -378,6 +382,120 @@ func (a *AuthAuditor) checkFederationInUse(keys []keyInfo, identities []client.K
 		AdminURL:    "https://login.tailscale.com/admin/settings/keys",
 		DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
 		AutoFixSafe: false,
+	}
+	return finding
+}
+
+// breadth classifies how much a federated identity subject admits.
+type breadth int
+
+const (
+	breadthPinned breadth = iota
+	breadthTrailingWildcard
+	breadthLeadingWildcard
+	breadthAny
+)
+
+// issuerHints map a recognized issuer host to remediation wording. They shape
+// the message only. The verdict is issuer-agnostic so that a provider changing
+// its subject grammar cannot silently invalidate a check.
+var issuerHints = map[string]string{
+	"token.actions.githubusercontent.com": "Pin the subject to one repository and ref, for example repo:ORG/REPO:ref:refs/heads/main.",
+	"accounts.google.com":                 "Pin the subject to the service account that runs the workload.",
+	"sts.amazonaws.com":                   "Pin the subject to the specific role the workload assumes.",
+}
+
+// subjectBreadth classifies a subject by where its wildcard sits. A subject
+// that is nothing but wildcards (and the separators around them) admits every
+// principal the issuer vouches for.
+func subjectBreadth(subject string) breadth {
+	s := strings.TrimSpace(subject)
+	if strings.Trim(s, "*:/ ") == "" {
+		return breadthAny
+	}
+	if !strings.Contains(s, "*") {
+		return breadthPinned
+	}
+	if strings.HasPrefix(s, "*") {
+		return breadthLeadingWildcard
+	}
+	return breadthTrailingWildcard
+}
+
+// checkFederatedIdentityConfig audits the configuration quality of trust
+// credentials that are already in use (AUTH-005 covers whether they exist at
+// all). A subject that is nothing but a wildcard lets any principal the
+// issuer will vouch for mint the credential's tags - a boundary crossing, so
+// it fails high regardless of issuer. A wildcard confined to one end of the
+// subject is narrower and reported without escalating severity; the same
+// goes for an empty audience or absent claim rules, which are supporting
+// facts rather than verdicts on their own.
+func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "AUTH-006",
+		Title:       "Federated identity subject admits unintended principals",
+		Severity:    types.High,
+		Category:    types.Authentication,
+		Description: "A trust credential's subject decides which workloads can mint its tags. A wildcard subject widens that to everything the issuer will vouch for.",
+		Remediation: "Pin each subject to one workload. Set an audience so a token minted for another relying party cannot be replayed, and add claim rules to tighten further.",
+		Source:      "https://tailscale.com/docs/features/workload-identity-federation",
+		Pass:        true,
+	}
+
+	var wideOpen, narrower, notes []string
+	for _, id := range identities {
+		label := id.ID
+		if id.Description != "" {
+			label = fmt.Sprintf("%s (%s)", id.Description, id.ID)
+		}
+		b := subjectBreadth(id.Subject)
+		switch b {
+		case breadthAny:
+			hint := "Pin the subject to a single workload."
+			if h, ok := issuerHints[id.Issuer]; ok {
+				hint = h
+			}
+			wideOpen = append(wideOpen, fmt.Sprintf("%s: subject %q accepts any principal issued by %s. %s",
+				label, id.Subject, id.Issuer, hint))
+		case breadthLeadingWildcard, breadthTrailingWildcard:
+			narrower = append(narrower, fmt.Sprintf("%s: subject %q contains a wildcard", label, id.Subject))
+		}
+
+		// Supporting facts. Neither sets severity on its own; an empty audience
+		// alongside a wildcard subject is the pairing that matters.
+		if strings.TrimSpace(id.Audience) == "" {
+			notes = append(notes, fmt.Sprintf("%s: no audience set, so a token minted for another relying party is not rejected", label))
+		}
+		if len(id.CustomClaimRules) == 0 && b != breadthPinned {
+			notes = append(notes, fmt.Sprintf("%s: wildcard subject with no claim rules to tighten it", label))
+		}
+	}
+
+	if len(wideOpen) > 0 {
+		finding.Pass = false
+		finding.Details = append(append(wideOpen, narrower...), notes...)
+		finding.Description = fmt.Sprintf("Found %d trust credential(s) whose subject accepts any principal the issuer vouches for.", len(wideOpen))
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeManual,
+			Description: "Narrow each subject to a single workload",
+			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
+			DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
+		}
+		return finding
+	}
+
+	if len(narrower) > 0 || len(notes) > 0 {
+		finding.Pass = false
+		finding.Severity = types.Low
+		finding.Details = append(narrower, notes...)
+		finding.Description = "Trust credentials are in use. These carry a wildcard subject or no audience, which may be intended but is worth confirming."
+		return finding
+	}
+
+	if len(identities) > 0 {
+		finding.Description = fmt.Sprintf("All %d trust credential(s) pin their subject.", len(identities))
+	} else {
+		finding.Description = "No trust credentials are configured."
 	}
 	return finding
 }
