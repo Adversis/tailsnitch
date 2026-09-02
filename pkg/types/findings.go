@@ -104,6 +104,13 @@ type AuditReport struct {
 	Tailnet     string       `json:"tailnet"`
 	Suggestions []Suggestion `json:"suggestions"`
 	Summary     Summary      `json:"summary"`
+
+	// IgnoreFile and Ignored record findings suppressed by an ignore file.
+	// An ignore file is picked up from the working directory, which may not
+	// be one the person reading the report chose, so the suppression is part
+	// of the report rather than a line printed only in the text output.
+	IgnoreFile string   `json:"ignore_file,omitempty"`
+	Ignored    []string `json:"ignored,omitempty"`
 }
 
 // CalculateSummary computes the summary from suggestions

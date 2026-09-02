@@ -28,11 +28,14 @@ func (d *DNSAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 		findings = append(findings, types.Suggestion{
 			ID:          "DNS-ERR",
 			Title:       "Could not retrieve DNS configuration",
-			Severity:    types.Informational,
+			Severity:    types.Medium,
 			Category:    types.DNSConfiguration,
-			Description: fmt.Sprintf("Unable to retrieve DNS configuration: %v", err),
-			Pass:        true,
+			Description: fmt.Sprintf("Unable to retrieve DNS configuration: %v. The DNS checks were not evaluated.", err),
+			Remediation: "Grant the credential the dns:read scope, then re-run the audit.",
+			Pass:        false,
 		})
+		findings = append(findings, types.NotEvaluated("DNS-001",
+			"The tailnet's DNS configuration could not be read. See DNS-ERR for the error."))
 		return findings, nil
 	}
 

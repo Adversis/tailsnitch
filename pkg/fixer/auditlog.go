@@ -29,7 +29,6 @@ type AuditLog struct {
 	DryRun    bool          `json:"dry_run"`
 	Actions   []AuditAction `json:"actions"`
 	file      *os.File
-	encoder   *json.Encoder
 	writer    io.Writer
 }
 

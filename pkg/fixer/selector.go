@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Adversis/tailsnitch/pkg/output"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
@@ -49,12 +50,13 @@ func newSelectorModel(items []types.FixableItem, autoSelect bool, config Selecto
 			checkbox = "[x]"
 			selected[i] = true
 		}
-		// Use Name if available, otherwise ID
+		// Use Name if available, otherwise ID. Both are reported by the
+		// device or key, so they are sanitized before they reach the table.
 		displayID := item.Name
 		if displayID == "" {
 			displayID = item.ID
 		}
-		rows[i] = table.Row{checkbox, displayID, item.Description}
+		rows[i] = table.Row{checkbox, output.Sanitize(displayID), output.Sanitize(item.Description)}
 	}
 
 	t := table.New(
@@ -134,7 +136,7 @@ func (m *selectorModel) updateRows() {
 		if displayID == "" {
 			displayID = item.ID
 		}
-		rows[i] = table.Row{checkbox, displayID, item.Description}
+		rows[i] = table.Row{checkbox, output.Sanitize(displayID), output.Sanitize(item.Description)}
 	}
 	m.table.SetRows(rows)
 }

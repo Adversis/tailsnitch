@@ -104,27 +104,37 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// Parse the ACL - first standardize HuJSON (with comments) to JSON
 	var policy ACLPolicy
 	var fields policyFields
+	var parseErr error
 	standardizedACL, err := hujson.Standardize([]byte(aclHuJSON.HuJSON))
 	if err != nil {
-		findings = append(findings, types.Suggestion{
-			ID:          "ACL-ERR",
-			Title:       "ACL parsing warning",
-			Severity:    types.Low,
-			Category:    types.AccessControl,
-			Description: fmt.Sprintf("Could not standardize HuJSON ACL: %v. Some checks may be incomplete.", err),
-			Pass:        true,
-		})
+		parseErr = fmt.Errorf("could not standardize HuJSON ACL: %w", err)
 	} else if err := json.Unmarshal(standardizedACL, &policy); err != nil {
-		findings = append(findings, types.Suggestion{
-			ID:          "ACL-ERR",
-			Title:       "ACL parsing warning",
-			Severity:    types.Low,
-			Category:    types.AccessControl,
-			Description: fmt.Sprintf("Could not parse ACL JSON: %v. Some checks may be incomplete.", err),
-			Pass:        true,
-		})
+		parseErr = fmt.Errorf("could not parse ACL JSON: %w", err)
 	} else {
 		fields = newPolicyFields(standardizedACL)
+	}
+
+	// A policy that did not parse leaves every check below with a zero-valued
+	// document to read, which they would report as a clean result. Say the
+	// checks did not run instead.
+	if parseErr != nil {
+		findings = append(findings, types.Suggestion{
+			ID:          "ACL-ERR",
+			Title:       "ACL policy could not be parsed",
+			Severity:    types.Medium,
+			Category:    types.AccessControl,
+			Description: fmt.Sprintf("%v. The access rule checks were not evaluated.", parseErr),
+			Remediation: "Correct the tailnet policy file syntax, then re-run the audit.",
+			Pass:        false,
+		})
+
+		// ACL-001 reports the unparsed policy in its own terms.
+		findings = append(findings, a.checkAllowAll(policy, fields))
+		for _, id := range aclPolicyChecks {
+			findings = append(findings, types.NotEvaluated(id,
+				"The tailnet policy file could not be parsed. See ACL-ERR for the parse error."))
+		}
+		return findings, nil
 	}
 
 	// ACL-001: Check for default "allow all" policy
@@ -158,6 +168,13 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	findings = append(findings, a.checkTaildropConfig(policy))
 
 	return findings, nil
+}
+
+// aclPolicyChecks are the access rule checks that read the parsed policy
+// document. ACL-001 is absent because it reports an unparsed policy itself.
+var aclPolicyChecks = []string{
+	"ACL-002", "ACL-003", "ACL-004", "ACL-005", "ACL-006",
+	"ACL-007", "ACL-008", "ACL-009", "ACL-010",
 }
 
 // policyFields records which top-level keys the tailnet policy file defines.

@@ -680,32 +680,6 @@ func (c *Client) SetDeviceTags(ctx context.Context, deviceID string, tags []stri
 	return nil
 }
 
-// CreateKey creates a new auth key with the specified capabilities.
-// The returned secret cannot be retrieved again after this call.
-func (c *Client) CreateKey(ctx context.Context, caps KeyCapabilities) (string, *Key, error) {
-	return c.CreateKeyWithExpiry(ctx, caps, 0)
-}
-
-// CreateKeyWithExpiry creates a new auth key with a custom expiration.
-// A zero expiry leaves the API default (90 days) in place.
-func (c *Client) CreateKeyWithExpiry(ctx context.Context, caps KeyCapabilities, expiry time.Duration) (string, *Key, error) {
-	if expiry < 0 {
-		return "", nil, fmt.Errorf("expiry must be positive")
-	}
-	if err := c.wait(ctx); err != nil {
-		return "", nil, err
-	}
-
-	key, err := c.ts.Keys().CreateAuthKey(ctx, CreateKeyRequest{
-		Capabilities:  caps,
-		ExpirySeconds: int64(expiry.Seconds()),
-	})
-	if err != nil {
-		return "", nil, classifyError(err, "CreateKey", "auth key")
-	}
-	return key.Key, key, nil
-}
-
 // SetACLHuJSON updates the ACL policy using HuJSON format, without ETag
 // collision detection.
 func (c *Client) SetACLHuJSON(ctx context.Context, acl *RawACL) error {

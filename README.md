@@ -167,7 +167,6 @@ tailsnitch --fix --no-audit-log
 | Check | Action |
 |-------|--------|
 | AUTH-001, AUTH-002, AUTH-003 | Delete auth keys |
-| AUTH-004 | Replace with ephemeral keys |
 | DEV-002 | Remove tags from user devices |
 | DEV-004 | Delete stale devices |
 | DEV-005 | Authorize pending devices |
@@ -217,6 +216,11 @@ LOG-001  # Flow logs require Enterprise plan
 **Ignore file locations (checked in order):**
 1. `.tailsnitch-ignore` in current directory
 2. `~/.tailsnitch-ignore` in home directory
+
+Because the first location is the working directory, an ignore file can come
+from a repository rather than from you. Every run reports which file it used
+and how many findings it suppressed, and `--json` records this in the
+`ignore_file` and `ignored` fields. Use `--no-ignore` to skip the file.
 
 ```bash
 # Use a specific ignore file
