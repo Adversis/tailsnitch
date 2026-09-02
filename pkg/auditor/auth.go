@@ -13,6 +13,14 @@ import (
 // AuthAuditor checks for authentication and key management issues
 type AuthAuditor struct {
 	client *client.Client
+
+	// policy, policyParsed and devices are set by Audit from its parameters so
+	// the check* methods can annotate a flagged key with what its tags reach.
+	// policyParsed being false, or devices being empty, means reach could not
+	// be computed and no annotation is added - see reachNote.
+	policy       ACLPolicy
+	policyParsed bool
+	devices      []*client.Device
 }
 
 // authKeyChecks are the checks that read the tailnet's machine auth keys.
@@ -63,11 +71,39 @@ func (k keyInfo) label() string {
 	return k.ID
 }
 
+// reachNote describes what a key's tags reach, for readers deciding whether a
+// flagged key matters. It returns an empty string when reach could not be
+// computed, so a figure is never printed that was not derived from real data.
+func reachNote(tags []string, policy ACLPolicy, policyParsed bool, devices []*client.Device) string {
+	if !policyParsed || len(devices) == 0 || len(tags) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, tag := range tags {
+		r := ComputeReach(tag, policy, devices)
+		switch {
+		case r.Wildcard:
+			parts = append(parts, fmt.Sprintf("%s reaches every device", tag))
+		default:
+			part := fmt.Sprintf("%s reaches %d of %d devices", tag, len(r.Devices), r.TotalDevices)
+			if len(r.Routed) > 0 {
+				part += fmt.Sprintf(" and routes to %s", r.Routed[0].CIDR)
+			}
+			parts = append(parts, part)
+		}
+	}
+	return "Reach: " + strings.Join(parts, "; ") + " (see ACL-011)"
+}
+
 // Audit performs authentication-related security checks. policy and
 // policyParsed are the tailnet's pre-fetched ACL policy, and devices is the
-// tailnet's device inventory; both are shared from Auditor.Run and unused
-// until the auth-key findings are annotated with device reach.
+// tailnet's device inventory; both are shared from Auditor.Run and stored on
+// the auditor so the auth-key findings can be annotated with device reach.
 func (a *AuthAuditor) Audit(ctx context.Context, policy ACLPolicy, policyParsed bool, devices []*client.Device) ([]types.Suggestion, error) {
+	a.policy = policy
+	a.policyParsed = policyParsed
+	a.devices = devices
+
 	var findings []types.Suggestion
 
 	// Get the tailnet's machine auth keys. The keys endpoint also returns API
@@ -148,7 +184,11 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				desc += fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			reusableKeys = append(reusableKeys, fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry))
+			line := fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			reusableKeys = append(reusableKeys, line)
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
 				Name:        key.label(),
@@ -189,7 +229,11 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	var fixableItems []types.FixableItem
 	for _, key := range keys {
 		if key.DaysToExpiry > 90 {
-			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry))
+			line := fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			longExpiryKeys = append(longExpiryKeys, line)
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
 				Name:        key.label(),
@@ -233,7 +277,11 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				tagInfo = fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo))
+			line := fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			preauthorizedKeys = append(preauthorizedKeys, line)
 		}
 	}
 

@@ -529,3 +529,41 @@ func TestCheckFederatedIdentityConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestReachNote(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+	devices := []*client.Device{web}
+	policy := ACLPolicy{
+		ACLs: []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+	}
+
+	t.Run("unparsed policy yields no note", func(t *testing.T) {
+		if got := reachNote([]string{"tag:ci"}, policy, false, devices); got != "" {
+			t.Errorf("reachNote = %q, want empty when the policy did not parse", got)
+		}
+	})
+
+	t.Run("no devices yields no note", func(t *testing.T) {
+		if got := reachNote([]string{"tag:ci"}, policy, true, nil); got != "" {
+			t.Errorf("reachNote = %q, want empty with no device inventory", got)
+		}
+	})
+
+	t.Run("reach is described", func(t *testing.T) {
+		got := reachNote([]string{"tag:ci"}, policy, true, devices)
+		if !strings.Contains(got, "tag:ci") || !strings.Contains(got, "1 of 1") {
+			t.Errorf("reachNote = %q, want it to name the tag and the count", got)
+		}
+	})
+
+	// Isolates the len(tags) == 0 guard: policy parsed and devices present, so
+	// only an empty tag list can make this return empty. A key with no tags
+	// has nothing for reach to describe.
+	t.Run("no tags yields no note", func(t *testing.T) {
+		if got := reachNote(nil, policy, true, devices); got != "" {
+			t.Errorf("reachNote = %q, want empty with no tags to describe", got)
+		}
+	})
+}
