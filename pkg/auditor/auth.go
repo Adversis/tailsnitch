@@ -377,6 +377,7 @@ func (a *AuthAuditor) checkFederationInUse(keys []keyInfo, identities []client.K
 		Description: "Create a trust credential for these workloads, then delete the static key",
 		AdminURL:    "https://login.tailscale.com/admin/settings/keys",
 		DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
+		AutoFixSafe: false,
 	}
 	return finding
 }

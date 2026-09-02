@@ -328,6 +328,7 @@ func TestCheckFederationInUse(t *testing.T) {
 	oneOff := keyInfo{ID: "k2", Reusable: false, Tags: []string{"tag:ci"}, DaysToExpiry: 7}
 	untagged := keyInfo{ID: "k3", Reusable: true, DaysToExpiry: 30}
 	expired := keyInfo{ID: "k4", Reusable: true, Tags: []string{"tag:old"}, DaysToExpiry: -3}
+	ephemeral := keyInfo{ID: "k5", Reusable: true, Ephemeral: true, Tags: []string{"tag:ci"}, DaysToExpiry: 30}
 
 	a := &AuthAuditor{}
 
@@ -371,6 +372,16 @@ func TestCheckFederationInUse(t *testing.T) {
 		f := a.checkFederationInUse([]keyInfo{expired}, nil)
 		if !f.Pass {
 			t.Error("an expired key should not be a migration candidate")
+		}
+	})
+
+	t.Run("ephemeral key is not a candidate", func(t *testing.T) {
+		// Reusable, tagged, unexpired - only Ephemeral can exclude this key.
+		// An ephemeral CI node removes itself after inactivity, so it is not
+		// the long-lived credential shape this check looks for.
+		f := a.checkFederationInUse([]keyInfo{ephemeral}, nil)
+		if !f.Pass {
+			t.Error("an ephemeral key should not be a migration candidate")
 		}
 	})
 }
