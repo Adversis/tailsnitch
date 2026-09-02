@@ -110,11 +110,10 @@ func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 
 	// AUTH-005: Workload identity federation not in use. Federated identities
 	// come from the same keys endpoint as auth keys, so a fetch failure here
-	// is reported the same way as an auth key read failure.
+	// is reported as not-evaluated, same as an auth key read failure.
 	identities, idErr := a.client.GetFederatedIdentities(ctx)
 	if idErr != nil {
-		findings = append(findings, types.NotEvaluated("AUTH-005",
-			"The tailnet's federated identities could not be read. See AUTH-ERR for the error."))
+		findings = append(findings, federationFetchFailed(idErr))
 	} else {
 		findings = append(findings, a.checkFederationInUse(keys, identities))
 	}
@@ -310,6 +309,16 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 // ephemeral, carrying tags, and still valid.
 func (k keyInfo) isMigrationCandidate() bool {
 	return k.Reusable && !k.Ephemeral && len(k.Tags) > 0 && k.DaysToExpiry >= 0
+}
+
+// federationFetchFailed builds the AUTH-005 not-evaluated finding for a
+// failure to read the tailnet's federated identities. Unlike the auth-keys
+// read failure above, no AUTH-ERR finding is emitted on this path, so the
+// reason must carry the error itself rather than point at a finding that was
+// never raised.
+func federationFetchFailed(err error) types.Suggestion {
+	return types.NotEvaluated("AUTH-005",
+		fmt.Sprintf("The tailnet's federated identities could not be read: %v", err))
 }
 
 func (a *AuthAuditor) checkFederationInUse(keys []keyInfo, identities []client.Key) types.Suggestion {

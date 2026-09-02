@@ -1,6 +1,8 @@
 package auditor
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -371,4 +373,22 @@ func TestCheckFederationInUse(t *testing.T) {
 			t.Error("an expired key should not be a migration candidate")
 		}
 	})
+}
+
+// When GetAuthKeys succeeds but the later GetFederatedIdentities call fails,
+// no AUTH-ERR finding is emitted (that only happens when GetAuthKeys itself
+// fails). The not-evaluated reason for AUTH-005 must therefore name the
+// actual error rather than point at a finding that was never raised.
+func TestFederationFetchFailedNamesTheErrorNotAUTHERR(t *testing.T) {
+	f := federationFetchFailed(errors.New("connection reset by peer"))
+
+	if f.Pass {
+		t.Error("expected Pass=false for a not-evaluated finding")
+	}
+	if !strings.Contains(f.Description, "connection reset by peer") {
+		t.Errorf("Description = %q, want it to name the actual error", f.Description)
+	}
+	if strings.Contains(f.Description, "AUTH-ERR") {
+		t.Errorf("Description = %q, must not reference AUTH-ERR: no such finding is emitted on this path", f.Description)
+	}
 }
