@@ -59,6 +59,7 @@ func NewCheckRegistry() *CheckRegistry {
 		{ID: "ACL-008", Title: "No groups defined in ACL policy", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "ACL-009", Title: "Using legacy ACLs instead of grants", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "ACL-010", Title: "Taildrop file sharing configuration", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2", "C1.1"}},
+		{ID: "ACL-011", Title: "Tag reach", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 
 		// Auth checks - CC6.1 (Logical Access), CC6.2 (Access Control), CC6.3 (Access Removal)
 		{ID: "AUTH-001", Title: "Reusable auth keys exist", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},

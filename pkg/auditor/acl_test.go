@@ -1,10 +1,13 @@
 package auditor
 
 import (
+	"errors"
+
 	"github.com/tailscale/hujson"
 
 	"testing"
 
+	"github.com/Adversis/tailsnitch/pkg/client"
 	"github.com/Adversis/tailsnitch/pkg/types"
 )
 
@@ -515,4 +518,133 @@ func TestPolicyFieldsReportsUnparseablePolicy(t *testing.T) {
 	if got.Pass {
 		t.Error("checkAllowAll() Pass = true for an unparseable policy; it should not claim the rules were evaluated")
 	}
+}
+
+func TestCheckTagReach(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+	gw := dev("prod-gw", []string{"10.0.0.0/8"}, nil)
+	devices := []*client.Device{web, gw}
+
+	reusableCIKey := client.Key{ID: "k1", KeyType: client.KeyTypeAuth}
+	reusableCIKey.Capabilities.Devices.Create.Reusable = true
+	reusableCIKey.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+
+	a := &ACLAuditor{}
+
+	t.Run("mintable tag reaching wildcard fails high", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		if f.Pass || f.Severity != types.High {
+			t.Errorf("want fail HIGH, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
+
+	t.Run("broad tag no key can mint stays informational", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:monitoring": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:monitoring"}, Dst: []string{"*:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		if !f.Pass {
+			t.Error("a broad tag that no auth key can mint must not fail")
+		}
+	})
+
+	t.Run("mintable tag reaching a routed cidr fails", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		if f.Pass {
+			t.Error("reaching a routed subnet crosses the tailnet boundary and must fail")
+		}
+	})
+
+	t.Run("narrow mintable tag passes", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		if !f.Pass {
+			t.Errorf("a tag reaching two devices on one port should not fail: %+v", f.Details)
+		}
+	})
+
+	t.Run("unreadable keys degrade to informational, not pass", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, nil, errors.New("403"))
+		if f.Pass {
+			t.Error("mintability unknown must not report as a satisfied control")
+		}
+		if f.Severity != types.Informational {
+			t.Errorf("Severity = %s, want INFO when mintability is unknown", f.Severity)
+		}
+	})
+
+	// The subtests above establish the HIGH arm (reusable key) for the
+	// wildcard condition, and structurally fail the routed-CIDR condition,
+	// but none of them assert MEDIUM for a one-off key, and none reach
+	// exit-node egress at all. Those are exercised below so that removing
+	// the Medium/High distinction, or removing the egress crossing check,
+	// is caught by a test rather than silently passing.
+
+	t.Run("mintable tag via a one-off key reaching wildcard fails medium", func(t *testing.T) {
+		oneOffKey := client.Key{ID: "k2", KeyType: client.KeyTypeAuth}
+		oneOffKey.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil)
+		if f.Pass || f.Severity != types.Medium {
+			t.Errorf("want fail MEDIUM for a one-off key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
+
+	t.Run("mintable tag reaching a routed cidr via a reusable key fails high", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{reusableCIKey}, nil)
+		if f.Pass || f.Severity != types.High {
+			t.Errorf("want fail HIGH for a routed cidr minted by a reusable key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
+
+	t.Run("mintable tag reaching a routed cidr via a one-off key fails medium", func(t *testing.T) {
+		oneOffKey := client.Key{ID: "k3", KeyType: client.KeyTypeAuth}
+		oneOffKey.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
+		}
+		f := a.checkTagReach(policy, devices, []client.Key{oneOffKey}, nil)
+		if f.Pass || f.Severity != types.Medium {
+			t.Errorf("want fail MEDIUM for a routed cidr minted by a one-off key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
+
+	t.Run("mintable tag reaching exit-node egress fails high", func(t *testing.T) {
+		exit := dev("edge-01", []string{"0.0.0.0/0", "::/0"}, nil)
+		devicesWithExit := append(append([]*client.Device{}, devices...), exit)
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil},
+			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"autogroup:internet:*"}}},
+		}
+		f := a.checkTagReach(policy, devicesWithExit, []client.Key{reusableCIKey}, nil)
+		if f.Pass || f.Severity != types.High {
+			t.Errorf("want fail HIGH for internet egress minted by a reusable key, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+	})
 }

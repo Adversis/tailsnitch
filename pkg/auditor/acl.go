@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tailscale/hujson"
 
@@ -93,7 +94,7 @@ type AutoApprovers struct {
 
 // Audit performs ACL-related security checks. devices and devErr are the
 // tailnet's device inventory, pre-fetched once in Auditor.Run and shared with
-// the Auth auditor; they are unused until ACL-011 consumes them.
+// the Auth auditor; ACL-011 consumes them to compute tag reach.
 func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr error) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
@@ -169,6 +170,17 @@ func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr
 	// ACL-010: Check Taildrop configuration
 	findings = append(findings, a.checkTaildropConfig(policy))
 
+	// ACL-011: Tag reach. This needs both the device inventory and the auth
+	// keys that can mint tags; if the device inventory itself could not be
+	// read, none of the reach it would report can be trusted.
+	keys, keysErr := a.client.GetAuthKeys(ctx)
+	if devErr != nil {
+		findings = append(findings, types.NotEvaluated("ACL-011",
+			fmt.Sprintf("The device inventory could not be read: %v", devErr)))
+	} else {
+		findings = append(findings, a.checkTagReach(policy, devices, keys, keysErr))
+	}
+
 	return findings, nil
 }
 
@@ -176,7 +188,7 @@ func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr
 // document. ACL-001 is absent because it reports an unparsed policy itself.
 var aclPolicyChecks = []string{
 	"ACL-002", "ACL-003", "ACL-004", "ACL-005", "ACL-006",
-	"ACL-007", "ACL-008", "ACL-009", "ACL-010",
+	"ACL-007", "ACL-008", "ACL-009", "ACL-010", "ACL-011",
 }
 
 // policyFields records which top-level keys the tailnet policy file defines.
@@ -791,5 +803,166 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 		}
 	}
 
+	return finding
+}
+
+// mintableTags returns the tags any live auth key can assign to a new node.
+func mintableTags(keys []client.Key) map[string]bool {
+	tags := make(map[string]bool)
+	for _, key := range keys {
+		if !key.Expires.IsZero() && time.Until(key.Expires) < 0 {
+			continue
+		}
+		for _, tag := range key.Capabilities.Devices.Create.Tags {
+			tags[tag] = true
+		}
+	}
+	return tags
+}
+
+// reusablyMintableTags returns the tags a reusable auth key can assign. A
+// reusable key keeps working after it leaks, which is a property of the
+// credential rather than a judgement about the environment, so it may raise
+// severity.
+func reusablyMintableTags(keys []client.Key) map[string]bool {
+	tags := make(map[string]bool)
+	for _, key := range keys {
+		if !key.Capabilities.Devices.Create.Reusable {
+			continue
+		}
+		if !key.Expires.IsZero() && time.Until(key.Expires) < 0 {
+			continue
+		}
+		for _, tag := range key.Capabilities.Devices.Create.Tags {
+			tags[tag] = true
+		}
+	}
+	return tags
+}
+
+// describeReach renders one tag's reach as report lines.
+func describeReach(r Reach, mintable, reusable bool) []string {
+	var lines []string
+	switch {
+	case r.Wildcard:
+		lines = append(lines, fmt.Sprintf("%s: reaches every device in the tailnet (a rule grants *:*)", r.Tag))
+	default:
+		allPortsCount := 0
+		for _, d := range r.Devices {
+			if d.AllPorts {
+				allPortsCount++
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s: reaches %d of %d devices, %d of them on all ports",
+			r.Tag, len(r.Devices), r.TotalDevices, allPortsCount))
+	}
+	for _, routed := range r.Routed {
+		lines = append(lines, fmt.Sprintf("    routes to %s via %s", routed.CIDR, routed.Router.Name))
+	}
+	for _, e := range r.Egress {
+		lines = append(lines, fmt.Sprintf("    egress to the internet via exit node %s", e.Name))
+	}
+	for _, u := range r.Unresolved {
+		lines = append(lines, fmt.Sprintf("    unresolved destination, not counted: %s", u))
+	}
+	if mintable {
+		how := "an auth key"
+		if reusable {
+			how = "a reusable auth key"
+		}
+		lines = append(lines, fmt.Sprintf("    %s can assign this tag", how))
+	}
+	return lines
+}
+
+// checkTagReach reports what every tag in the policy can reach, and fails
+// only when a tag an auth key can actually mint crosses a trust boundary: it
+// reaches every device, a routed subnet, or internet egress. A tag's device
+// count never sets severity - the tool has no way to know whether reaching
+// 47 devices is correct for that tag or catastrophic. Reusability of the
+// minting key is a structural property of the credential and may raise
+// severity from Medium to High.
+func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, keys []client.Key, keysErr error) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "ACL-011",
+		Title:       "Tag reach",
+		Severity:    types.Informational,
+		Category:    types.AccessControl,
+		Description: "What a tag can reach is what a node carrying that tag can reach. A tag an auth key can assign is reachable by anyone holding that key.",
+		Remediation: "Narrow the rules that name this tag as a source, or replace the auth key that assigns it with a trust credential so there is no key to steal.",
+		Source:      "https://tailscale.com/docs/features/tags",
+		Pass:        true,
+	}
+
+	reaches := AllTagReach(policy, devices)
+	if len(reaches) == 0 {
+		finding.Description = "The policy defines no tags."
+		return finding
+	}
+
+	mintable := mintableTags(keys)
+	reusable := reusablyMintableTags(keys)
+
+	var details []string
+	var offenders []string
+	worst := types.Informational
+
+	for _, r := range reaches {
+		isMintable := keysErr == nil && mintable[r.Tag]
+		isReusable := keysErr == nil && reusable[r.Tag]
+		details = append(details, describeReach(r, isMintable, isReusable)...)
+
+		if !isMintable {
+			continue
+		}
+		crossings := []string{}
+		if r.Wildcard {
+			crossings = append(crossings, "reaches every device")
+		}
+		if len(r.Routed) > 0 {
+			crossings = append(crossings, "routes past the tailnet edge")
+		}
+		if len(r.Egress) > 0 {
+			crossings = append(crossings, "carries internet egress")
+		}
+		if len(crossings) == 0 {
+			continue
+		}
+		offenders = append(offenders, fmt.Sprintf("%s: %s", r.Tag, strings.Join(crossings, ", ")))
+		sev := types.Medium
+		if isReusable {
+			sev = types.High
+		}
+		if sev.Order() < worst.Order() {
+			worst = sev
+		}
+	}
+
+	if keysErr != nil {
+		finding.Pass = false
+		finding.Description = "Tag reach was computed, but the auth keys could not be read, so it is unknown which tags a key can assign."
+		finding.Details = append([]string{
+			fmt.Sprintf("Could not read auth keys: %v", keysErr),
+			"MANUAL CHECK REQUIRED: confirm which of these tags an auth key can assign.",
+		}, details...)
+		return finding
+	}
+
+	if len(offenders) == 0 {
+		finding.Details = details
+		finding.Description = fmt.Sprintf("Reach computed for %d tag(s). No tag that an auth key can assign crosses a trust boundary.", len(reaches))
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Severity = worst
+	finding.Description = fmt.Sprintf("%d tag(s) that an auth key can assign cross a trust boundary.", len(offenders))
+	finding.Details = append(append([]string{"Tags crossing a boundary:"}, offenders...), append([]string{"", "Reach for every tag:"}, details...)...)
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Narrow these tags' rules, or replace the auth key that assigns them",
+		AdminURL:    "https://login.tailscale.com/admin/acls",
+		DocURL:      "https://tailscale.com/docs/features/tags",
+	}
 	return finding
 }
