@@ -840,6 +840,28 @@ func reusablyMintableTags(keys []client.Key) map[string]bool {
 	return tags
 }
 
+// suppressedTagsPresent returns the tags this policy actually has that the
+// ignore file also names for ACL-011 - the subset of ItemsFor("ACL-011")
+// that AllTagReach found, so a rule naming a tag the policy doesn't have
+// does not falsely claim something was suppressed.
+func suppressedTagsPresent(ignoreList *types.IgnoreList, reaches []Reach) []string {
+	ignored := ignoreList.ItemsFor("ACL-011")
+	if len(ignored) == 0 {
+		return nil
+	}
+	ignoredSet := make(map[string]bool, len(ignored))
+	for _, tag := range ignored {
+		ignoredSet[tag] = true
+	}
+	var present []string
+	for _, r := range reaches {
+		if ignoredSet[r.Tag] {
+			present = append(present, r.Tag)
+		}
+	}
+	return present
+}
+
 // describeReach renders one tag's reach as report lines.
 func describeReach(r Reach, mintable, reusable bool) []string {
 	var lines []string
@@ -903,6 +925,12 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 	mintable := mintableTags(keys)
 	reusable := reusablyMintableTags(keys)
 
+	// The subset of the ignore file's ACL-011 rules that actually name a tag
+	// this policy has, used below to say when the reach table or the
+	// manual-check list has silently shrunk. A rule naming a tag the policy
+	// doesn't have suppresses nothing, so it is not counted.
+	suppressedTags := suppressedTagsPresent(ignoreList, reaches)
+
 	var details []string
 	var offenders []string
 	var suppressedOffenders []string
@@ -958,16 +986,34 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 		finding.Pass = false
 		finding.Description = "Tag reach was computed, but the auth keys could not be read, so it is unknown which tags a key can assign."
 		finding.Remediation = "Grant the credential the auth_keys:read scope, then re-run the audit to determine which tags an auth key can assign."
-		finding.Details = append([]string{
+		manualDetails := []string{
 			fmt.Sprintf("Could not read auth keys: %v", keysErr),
 			"MANUAL CHECK REQUIRED: confirm which of these tags an auth key can assign.",
-		}, details...)
+		}
+		if len(suppressedTags) > 0 {
+			// This list is exactly what someone must now check by hand. A tag
+			// that vanished from it because of an ignore file written for the
+			// boundary-crossing question above must not vanish silently here
+			// too - the two questions are different, and suppressing one
+			// does not answer the other.
+			manualDetails = append(manualDetails, fmt.Sprintf(
+				"%d tag(s) were suppressed by the ignore file and are not listed below; confirm those manually too.",
+				len(suppressedTags)))
+		}
+		finding.Details = append(manualDetails, details...)
 		return finding
 	}
 
 	if len(offenders) == 0 && len(suppressedOffenders) == 0 {
-		finding.Details = details
 		finding.Description = fmt.Sprintf("Reach computed for %d tag(s). No tag that an auth key can assign crosses a trust boundary.", len(reaches))
+		finding.Details = details
+		if len(suppressedTags) > 0 {
+			// len(reaches) above still counts every tag the policy defines,
+			// suppressed or not; without this, the count and the table it
+			// describes would disagree about how many tags there are.
+			finding.Details = append(append([]string{}, details...), fmt.Sprintf(
+				"%d tag(s) were suppressed by the ignore file and are not shown above.", len(suppressedTags)))
+		}
 		return finding
 	}
 
@@ -997,7 +1043,7 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 	if len(suppressedOffenders) > 0 {
 		boundaryLines = append(boundaryLines, fmt.Sprintf("(%d additional tag(s) crossing a boundary suppressed by the ignore file)", len(suppressedOffenders)))
 	}
-	finding.Details = append(append(boundaryLines, "", "Reach for every tag:"), details...)
+	finding.Details = append(append(boundaryLines, "", "Reach for every unsuppressed tag:"), details...)
 	finding.Fix = &types.FixInfo{
 		Type:        types.FixTypeManual,
 		Description: "Narrow these tags' rules, or replace the auth key that assigns them",

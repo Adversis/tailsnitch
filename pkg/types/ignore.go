@@ -80,6 +80,13 @@ func LoadIgnoreFile(path string) (*IgnoreList, error) {
 				il.items[checkID][item] = true
 				continue
 			}
+			// "ACL-011:" with nothing after the colon names no item. Treat
+			// it as a whole-check ignore of the part before the colon
+			// rather than registering a rule for the literal string
+			// "ACL-011:", which can never match any real check ID and
+			// would otherwise silently do nothing.
+			il.ids[checkID] = true
+			continue
 		}
 
 		// Add to ignore list (case-insensitive for convenience)
@@ -163,11 +170,16 @@ func (il *IgnoreList) Count() int {
 
 // filterItemsByIgnore removes the items ignoreList suppresses for s.ID from
 // s.Fix.Items, and - where it can safely tell which Details line belongs to
-// which item - from s.Details too. It never turns a failing finding into a
-// passing one: suppressing every flagged item downgrades the finding to
-// Informational rather than letting it disappear as a satisfied control,
-// echoing NotEvaluated's rule that an unevaluated check must not read as one
-// that passed.
+// which item - from s.Details too. It returns the modified suggestion and
+// the IDs of the items it suppressed (nil if none).
+//
+// It never turns a failing finding into a passing one: suppressing every
+// flagged item downgrades the finding to Informational rather than letting
+// it disappear as a satisfied control, echoing NotEvaluated's rule that an
+// unevaluated check must not read as one that passed. Any suppression, full
+// or partial, leaves a note in Details - a Description computed before
+// filtering (e.g. "Found 2 reusable auth key(s)") must not go on describing
+// a list that has since shrunk without saying why.
 //
 // Only checks that carry FixInfo.Items are handled here, since Details for
 // those checks is, by convention elsewhere in this codebase, one line per
@@ -175,25 +187,26 @@ func (il *IgnoreList) Count() int {
 // with no item notion (no Fix, or a Fix with no Items) is returned
 // unchanged; ACL-011 has no FixInfo.Items and instead consults
 // IsItemIgnored directly while building its own findings.
-func filterItemsByIgnore(s Suggestion, ignoreList *IgnoreList) Suggestion {
+func filterItemsByIgnore(s Suggestion, ignoreList *IgnoreList) (Suggestion, []string) {
 	if s.Fix == nil || len(s.Fix.Items) == 0 {
-		return s
+		return s, nil
 	}
 
-	origCount := len(s.Fix.Items)
+	origItems := s.Fix.Items
+	origCount := len(origItems)
 	keep := make([]bool, origCount)
 	var keptItems []FixableItem
-	suppressedCount := 0
-	for i, item := range s.Fix.Items {
+	var suppressedIDs []string
+	for i, item := range origItems {
 		if ignoreList.IsItemIgnored(s.ID, item.ID) {
-			suppressedCount++
+			suppressedIDs = append(suppressedIDs, item.ID)
 			continue
 		}
 		keep[i] = true
 		keptItems = append(keptItems, item)
 	}
-	if suppressedCount == 0 {
-		return s
+	if len(suppressedIDs) == 0 {
+		return s, nil
 	}
 
 	newFix := *s.Fix
@@ -201,38 +214,62 @@ func filterItemsByIgnore(s Suggestion, ignoreList *IgnoreList) Suggestion {
 	s.Fix = &newFix
 
 	// If Details is a []string at least as long as the item list, assume its
-	// last origCount entries line up 1:1 with the (pre-filter) Fix.Items -
-	// true of every check in this codebase that sets both - and filter that
-	// suffix the same way, leaving any leading header lines alone. A shorter
-	// or differently-shaped Details is left untouched rather than guessed at.
+	// last origCount entries line up 1:1 with origItems - true of every
+	// check in this codebase that sets both - and filter that suffix the
+	// same way, leaving any leading header lines alone. Before dropping a
+	// line, confirm it actually names the item being dropped: a future
+	// check that emits more than one Details line per item would still
+	// satisfy the length check, and without this a misaligned index could
+	// delete an unsuppressed item's line instead. A shorter Details, or one
+	// that fails this check, is left untouched rather than guessed at.
 	if details, ok := s.Details.([]string); ok && len(details) >= origCount {
 		prefixLen := len(details) - origCount
-		kept := append([]string{}, details[:prefixLen]...)
+		aligned := true
 		for i := 0; i < origCount; i++ {
-			if keep[i] {
-				kept = append(kept, details[prefixLen+i])
+			if !keep[i] && !strings.Contains(details[prefixLen+i], origItems[i].Name) {
+				aligned = false
+				break
 			}
 		}
-		s.Details = kept
+		if aligned {
+			kept := append([]string{}, details[:prefixLen]...)
+			for i := 0; i < origCount; i++ {
+				if keep[i] {
+					kept = append(kept, details[prefixLen+i])
+				}
+			}
+			s.Details = kept
+		}
+	}
+
+	// A suppressed control must leave a trace, whether some or all of its
+	// flagged items were suppressed - otherwise Description's pre-filter
+	// counts contradict a Details list that has quietly shrunk.
+	note := fmt.Sprintf("%d of %d flagged item(s) suppressed by the ignore file.", len(suppressedIDs), origCount)
+	switch details := s.Details.(type) {
+	case []string:
+		s.Details = append(details, note)
+	case nil:
+		s.Details = note
+	default:
+		s.Details = []string{fmt.Sprint(details), note}
 	}
 
 	if len(keptItems) == 0 && !s.Pass {
 		s.Severity = Informational
-		note := fmt.Sprintf("All %d flagged item(s) were suppressed by the ignore file.", origCount)
-		if details, ok := s.Details.([]string); ok {
-			s.Details = append(details, note)
-		} else {
-			s.Details = note
-		}
 	}
 
-	return s
+	return s, suppressedIDs
 }
 
 // FilterIgnored returns the suggestions that are not in the ignore list, and
-// the IDs of the ones it removed entirely (whole-check ignores). A finding
-// with only some of its items ignored is kept, with those items removed -
-// see filterItemsByIgnore.
+// the rules that actually applied: a whole check ID for one removed
+// entirely, or "CHECK-ID:item" for one item suppressed within a finding that
+// is otherwise kept - see filterItemsByIgnore. A check that manages its own
+// item suppression instead of using FixInfo.Items (ACL-011) does not surface
+// per-item entries through that path, so every per-item rule for a check
+// that appears in suggestions and was not otherwise handled is recorded here
+// too, via ItemsFor.
 func FilterIgnored(suggestions []Suggestion, ignoreList *IgnoreList) ([]Suggestion, []string) {
 	if ignoreList == nil || ignoreList.Count() == 0 {
 		return suggestions, nil
@@ -240,16 +277,46 @@ func FilterIgnored(suggestions []Suggestion, ignoreList *IgnoreList) ([]Suggesti
 
 	var result []Suggestion
 	var ignored []string
-	seen := make(map[string]bool)
+	seenWhole := make(map[string]bool)
+	seenItems := make(map[string]bool) // check IDs already recorded via Fix.Items suppression
 	for _, s := range suggestions {
 		if ignoreList.IsIgnored(s.ID) {
-			if !seen[s.ID] {
-				seen[s.ID] = true
+			if !seenWhole[s.ID] {
+				seenWhole[s.ID] = true
 				ignored = append(ignored, s.ID)
 			}
 			continue
 		}
-		result = append(result, filterItemsByIgnore(s, ignoreList))
+
+		filtered, suppressedIDs := filterItemsByIgnore(s, ignoreList)
+		if len(suppressedIDs) > 0 {
+			seenItems[s.ID] = true
+			for _, item := range suppressedIDs {
+				ignored = append(ignored, fmt.Sprintf("%s:%s", s.ID, item))
+			}
+		}
+		result = append(result, filtered)
 	}
+
+	// A check with no FixInfo.Items - ACL-011 is the only one today - never
+	// goes through filterItemsByIgnore above, so its per-item rules would
+	// otherwise vanish from this report entirely. Record them here instead,
+	// as long as the check actually appears in this audit's output; a rule
+	// for a check ID that never ran, or was already whole-check ignored, is
+	// not recorded.
+	for _, s := range suggestions {
+		if seenWhole[s.ID] || seenItems[s.ID] {
+			continue
+		}
+		items := ignoreList.ItemsFor(s.ID)
+		if len(items) == 0 {
+			continue
+		}
+		seenItems[s.ID] = true
+		for _, item := range items {
+			ignored = append(ignored, fmt.Sprintf("%s:%s", s.ID, item))
+		}
+	}
+
 	return result, ignored
 }

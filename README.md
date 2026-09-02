@@ -211,7 +211,18 @@ ACL-009  # Legacy ACLs are fine for our use case
 # Ignore specific medium checks with justification
 DEV-006  # External devices are approved contractors
 LOG-001  # Flow logs require Enterprise plan
+
+# Ignore one item within a check, instead of muting the whole check
+ACL-011:tag:monitoring  # broad by design; every other tag is still checked
+AUTH-001:tskey-auth-xxxx  # rotates automatically via CI, tracked in TICKET-123
 ```
+
+A line names either a whole check (`ACL-011`) or one item within it
+(`CHECK-ID:item`, split on the first colon - the item itself may contain
+colons). A per-item rule suppresses only that item: the check still runs and
+still reports everything else it finds. Suppressing every flagged item never
+turns a failing check into a passing one - the finding stays, downgraded to
+Informational, so a suppressed finding never reads as a satisfied control.
 
 **Ignore file locations (checked in order):**
 1. `.tailsnitch-ignore` in current directory
@@ -219,8 +230,9 @@ LOG-001  # Flow logs require Enterprise plan
 
 Because the first location is the working directory, an ignore file can come
 from a repository rather than from you. Every run reports which file it used
-and how many findings it suppressed, and `--json` records this in the
-`ignore_file` and `ignored` fields. Use `--no-ignore` to skip the file.
+and how many findings and items it suppressed, and `--json` records this in
+the `ignore_file` and `ignored` fields (`CHECK-ID` for a whole check,
+`CHECK-ID:item` for one suppressed item). Use `--no-ignore` to skip the file.
 
 ```bash
 # Use a specific ignore file

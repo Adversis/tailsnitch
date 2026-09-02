@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -170,11 +171,56 @@ AUTH-001
 	})
 }
 
+// TestLoadIgnoreFile_TrailingColon covers a line like "ACL-011:" with
+// nothing after the colon. It names no item, so it must fall back to a
+// whole-check ignore of the part before the colon rather than silently
+// registering a rule for the literal string "ACL-011:", which can never
+// match any real check ID.
+func TestLoadIgnoreFile_TrailingColon(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".tailsnitch-ignore")
+	if err := os.WriteFile(path, []byte("ACL-011:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	il, err := LoadIgnoreFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !il.IsIgnored("ACL-011") {
+		t.Error("a trailing colon with no item must fall back to a whole-check ignore")
+	}
+	if il.Count() != 1 {
+		t.Errorf("Count() = %d, want 1 (not a phantom per-item rule for the empty string)", il.Count())
+	}
+	if items := il.ItemsFor("ACL-011"); items != nil {
+		t.Errorf("ItemsFor(\"ACL-011\") = %v, want nil - no item was ever named", items)
+	}
+}
+
+// detailsContainString reports whether details (a Suggestion.Details value)
+// is a []string with a line containing substr.
+func detailsContainString(details interface{}, substr string) bool {
+	lines, ok := details.([]string)
+	if !ok {
+		return false
+	}
+	for _, d := range lines {
+		if strings.Contains(d, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestFilterIgnored_PerItem covers the wiring required beyond the brief:
 // FilterIgnored must remove ignored items from a finding's Fix.Items and
-// Details rather than dropping the whole finding, and it must never let a
+// Details rather than dropping the whole finding, it must never let a
 // finding that already failed report as passing - only downgrade to
-// Informational once nothing flagged remains.
+// Informational once nothing flagged remains - and any suppression, partial
+// or full, must leave a trace so Description's pre-filter counts never end
+// up describing a Details list that has quietly shrunk.
 func TestFilterIgnored_PerItem(t *testing.T) {
 	newFinding := func() Suggestion {
 		return Suggestion{
@@ -194,14 +240,14 @@ func TestFilterIgnored_PerItem(t *testing.T) {
 		}
 	}
 
-	t.Run("partial suppression removes only the ignored item", func(t *testing.T) {
+	t.Run("partial suppression removes only the ignored item and records CHECK-ID:item", func(t *testing.T) {
 		il := &IgnoreList{items: map[string]map[string]bool{
 			"AUTH-001": {"key1": true},
 		}}
 
 		filtered, ignored := FilterIgnored([]Suggestion{newFinding()}, il)
-		if len(ignored) != 0 {
-			t.Errorf("ignored = %v, want none (per-item rules do not mute the whole check)", ignored)
+		if !slices.Equal(ignored, []string{"AUTH-001:key1"}) {
+			t.Errorf("ignored = %v, want [AUTH-001:key1] (a per-item rule is recorded, but does not mute the whole check)", ignored)
 		}
 		if len(filtered) != 1 {
 			t.Fatalf("len(filtered) = %d, want 1 (the finding must not be dropped)", len(filtered))
@@ -218,17 +264,37 @@ func TestFilterIgnored_PerItem(t *testing.T) {
 			t.Errorf("Fix.Items = %v, want only key2 remaining", f.Fix.Items)
 		}
 		details, ok := f.Details.([]string)
-		if !ok || len(details) != 1 || details[0] != "key two (expires in 20 days)" {
-			t.Errorf("Details = %v, want only key two's line remaining", f.Details)
+		if !ok || len(details) != 2 || details[0] != "key two (expires in 20 days)" {
+			t.Errorf("Details = %v, want key two's line plus a suppression note", f.Details)
 		}
 	})
 
-	t.Run("suppressing every item does not make the check pass", func(t *testing.T) {
+	t.Run("partial suppression does not leave Description and Details contradicting each other", func(t *testing.T) {
+		il := &IgnoreList{items: map[string]map[string]bool{
+			"AUTH-001": {"key1": true},
+		}}
+
+		filtered, _ := FilterIgnored([]Suggestion{newFinding()}, il)
+		f := filtered[0]
+
+		// Description was computed before filtering and still says "Found 2
+		// reusable auth key(s)."; Details now lists only one. Without a note
+		// reconciling the two, that is self-contradictory audit output.
+		if strings.Contains(fmt.Sprint(f.Description), "2") && !detailsContainString(f.Details, "1 of 2") {
+			t.Errorf("Description still says 2 but Details does not explain the discrepancy: description=%q details=%v",
+				f.Description, f.Details)
+		}
+	})
+
+	t.Run("suppressing every item does not make the check pass, and both items are recorded", func(t *testing.T) {
 		il := &IgnoreList{items: map[string]map[string]bool{
 			"AUTH-001": {"key1": true, "key2": true},
 		}}
 
-		filtered, _ := FilterIgnored([]Suggestion{newFinding()}, il)
+		filtered, ignored := FilterIgnored([]Suggestion{newFinding()}, il)
+		if !slices.Equal(ignored, []string{"AUTH-001:key1", "AUTH-001:key2"}) {
+			t.Errorf("ignored = %v, want [AUTH-001:key1 AUTH-001:key2]", ignored)
+		}
 		if len(filtered) != 1 {
 			t.Fatalf("len(filtered) = %d, want 1 (a fully-suppressed check must still be reported)", len(filtered))
 		}
@@ -244,6 +310,9 @@ func TestFilterIgnored_PerItem(t *testing.T) {
 		if len(f.Fix.Items) != 0 {
 			t.Errorf("Fix.Items = %v, want none remaining", f.Fix.Items)
 		}
+		if !detailsContainString(f.Details, "2 of 2") {
+			t.Errorf("Details = %v, want a note that all 2 of 2 were suppressed", f.Details)
+		}
 	})
 
 	t.Run("no per-item rules leaves the finding untouched", func(t *testing.T) {
@@ -251,10 +320,94 @@ func TestFilterIgnored_PerItem(t *testing.T) {
 			"OTHER-001": {"x": true},
 		}}
 
-		filtered, _ := FilterIgnored([]Suggestion{newFinding()}, il)
+		filtered, ignored := FilterIgnored([]Suggestion{newFinding()}, il)
 		f := filtered[0]
 		if len(f.Fix.Items) != 2 {
 			t.Errorf("Fix.Items = %v, want both items untouched", f.Fix.Items)
+		}
+		if len(ignored) != 0 {
+			t.Errorf("ignored = %v, want none - OTHER-001 never appears in this report", ignored)
+		}
+	})
+
+	t.Run("non-[]string Details is preserved, not discarded", func(t *testing.T) {
+		f := newFinding()
+		f.Details = "a single freeform detail line"
+		il := &IgnoreList{items: map[string]map[string]bool{
+			"AUTH-001": {"key1": true},
+		}}
+
+		filtered, _ := FilterIgnored([]Suggestion{f}, il)
+		details, ok := filtered[0].Details.([]string)
+		if !ok || len(details) != 2 || details[0] != "a single freeform detail line" {
+			t.Errorf("Details = %v, want the original string preserved plus a suppression note, not discarded", filtered[0].Details)
+		}
+	})
+
+	t.Run("a check with no Fix.Items still records its per-item rules via ItemsFor", func(t *testing.T) {
+		// Models ACL-011: no FixInfo.Items, so filterItemsByIgnore never
+		// touches it, but the ignore file still named one of its items and
+		// that must not vanish from the report's record of what applied.
+		selfSuppressing := Suggestion{ID: "ACL-011", Title: "Tag reach", Pass: false}
+		il := &IgnoreList{items: map[string]map[string]bool{
+			"ACL-011": {"tag:monitoring": true},
+		}}
+
+		filtered, ignored := FilterIgnored([]Suggestion{selfSuppressing}, il)
+		if !slices.Equal(ignored, []string{"ACL-011:tag:monitoring"}) {
+			t.Errorf("ignored = %v, want [ACL-011:tag:monitoring]", ignored)
+		}
+		if len(filtered) != 1 || filtered[0].ID != "ACL-011" {
+			t.Errorf("filtered = %v, want the ACL-011 finding kept as-is (it already applied its own suppression)", filtered)
+		}
+	})
+
+	t.Run("a misaligned Details is left untouched rather than deleting the wrong line", func(t *testing.T) {
+		// Simulates a hypothetical future check that emits two Details lines
+		// per item. len(Details) == 4 still satisfies "at least origCount",
+		// so without the Name check the code would assume the last 2 lines
+		// map 1:1 to the 2 Fix.Items and delete the wrong one.
+		f := Suggestion{
+			ID:       "HYPO-001",
+			Pass:     false,
+			Severity: High,
+			Details: []string{
+				"Item One first line", "Item One second line",
+				"Item Two first line", "Item Two second line",
+			},
+			Fix: &FixInfo{
+				Type: FixTypeAPI,
+				Items: []FixableItem{
+					{ID: "id1", Name: "Item One"},
+					{ID: "id2", Name: "Item Two"},
+				},
+			},
+		}
+		il := &IgnoreList{items: map[string]map[string]bool{
+			"HYPO-001": {"id1": true},
+		}}
+
+		filtered, _ := FilterIgnored([]Suggestion{f}, il)
+		got := filtered[0]
+
+		if len(got.Fix.Items) != 1 || got.Fix.Items[0].ID != "id2" {
+			t.Errorf("Fix.Items = %v, want only id2 remaining regardless of the Details outcome", got.Fix.Items)
+		}
+		details, ok := got.Details.([]string)
+		if !ok {
+			t.Fatalf("Details = %v, want a []string", got.Details)
+		}
+		for _, want := range []string{"Item One first line", "Item One second line", "Item Two first line", "Item Two second line"} {
+			found := false
+			for _, d := range details {
+				if d == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Details = %v, want the original line %q preserved: the alignment check should have refused to guess and left Details alone", details, want)
+			}
 		}
 	})
 }

@@ -805,7 +805,7 @@ func TestCheckTagReachPerItemIgnore(t *testing.T) {
 		}
 	})
 
-	t.Run("suppressing a tag that never offended leaves the check clean", func(t *testing.T) {
+	t.Run("suppressing a tag that never offended leaves the check clean but still notes the suppression", func(t *testing.T) {
 		policy := ACLPolicy{
 			TagOwners: map[string][]string{"tag:ci": nil},
 			ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
@@ -819,6 +819,39 @@ func TestCheckTagReachPerItemIgnore(t *testing.T) {
 		}
 		if f.Severity != types.Informational {
 			t.Errorf("Severity = %s, want INFO for a clean result", f.Severity)
+		}
+		// Description's "Reach computed for %d tag(s)" counts every tag the
+		// policy defines, including the suppressed one, over a table that
+		// omits it - Details must say so or the two contradict each other.
+		if !detailsContain(f.Details, "were suppressed by the ignore file") {
+			t.Errorf("Details must note that a tag was suppressed, since the count above still includes it: %v", f.Details)
+		}
+	})
+
+	t.Run("unreadable keys: a suppressed tag is still noted on the manual-check list", func(t *testing.T) {
+		policy := ACLPolicy{
+			TagOwners: map[string][]string{"tag:ci": nil, "tag:monitoring": nil},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}},
+				{Action: "accept", Src: []string{"tag:monitoring"}, Dst: []string{"*:*"}},
+			},
+		}
+		il := ignoreListFor(t, "tag:monitoring")
+
+		f := a.checkTagReach(policy, devices, nil, errors.New("403"), il)
+
+		if f.Pass {
+			t.Error("mintability unknown must not report as a satisfied control")
+		}
+		if detailsContain(f.Details, "tag:monitoring") {
+			t.Errorf("the suppressed tag must not appear in the reach table: %v", f.Details)
+		}
+		// This list is what the person is told to check by hand. Silently
+		// shrinking it because of an ignore file written for a different
+		// question (boundary crossing) would leave tag:monitoring unchecked
+		// by either question.
+		if !detailsContain(f.Details, "MANUAL CHECK REQUIRED") || !detailsContain(f.Details, "were suppressed by the ignore file") {
+			t.Errorf("the manual-check list must note that a tag was suppressed, not just drop it: %v", f.Details)
 		}
 	})
 
@@ -846,6 +879,11 @@ func TestCheckTagReachPerItemIgnore(t *testing.T) {
 		}
 		if !detailsContain(f.Details, "tag:ci") {
 			t.Errorf("the unsuppressed offender must still be named: %v", f.Details)
+		}
+		// The header must not claim to list every tag over a table that
+		// deliberately omits the suppressed one.
+		if !detailsContain(f.Details, "Reach for every unsuppressed tag:") {
+			t.Errorf("Details header must say \"unsuppressed\" once a tag was left out: %v", f.Details)
 		}
 	})
 }
