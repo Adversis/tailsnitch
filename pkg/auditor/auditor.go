@@ -51,8 +51,12 @@ func New(c *client.Client) *Auditor {
 	return &Auditor{client: c}
 }
 
-// Run executes all audit checks and returns a report
-func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
+// Run executes all audit checks and returns a report. ignoreList may be nil
+// (or empty) if ignore file processing is disabled; ACL-011 consults it
+// directly while building its per-tag findings so a suppressed tag can be
+// left out of the reach table without the whole check disappearing - see
+// checkTagReach.
+func (a *Auditor) Run(ctx context.Context, ignoreList *types.IgnoreList) (*types.AuditReport, error) {
 	report := &types.AuditReport{
 		Timestamp: time.Now(),
 		Tailnet:   a.client.Tailnet(),
@@ -112,6 +116,9 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 	// parallel auditors below do not each re-request it.
 	tailnetCtx := FetchTailnetContext(ctx, a.client)
 
+	// Shared with the ACL and Auth auditors so they do not each re-request it.
+	devices, devErr := a.client.GetDevices(ctx)
+
 	// Run all auditors in parallel using errgroup
 	var (
 		results []auditorResult
@@ -126,18 +133,18 @@ func (a *Auditor) Run(ctx context.Context) (*types.AuditReport, error) {
 		mu.Unlock()
 	}
 
-	// ACL auditor
+	// ACL auditor (uses the shared device inventory)
 	g.Go(func() error {
 		auditor := NewACLAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, devices, devErr, ignoreList)
 		appendResult(auditorResult{name: "ACL", findings: findings, err: err})
 		return nil // Don't fail the group on auditor errors
 	})
 
-	// Auth auditor
+	// Auth auditor (uses pre-fetched ACL policy and the shared device inventory)
 	g.Go(func() error {
 		auditor := NewAuthAuditor(a.client)
-		findings, err := auditor.Audit(gctx)
+		findings, err := auditor.Audit(gctx, policy, policyParsed, devices)
 		appendResult(auditorResult{name: "Auth", findings: findings, err: err})
 		return nil
 	})

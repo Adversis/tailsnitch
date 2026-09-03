@@ -160,20 +160,12 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		output.PrintBanner(os.Stdout, c.Tailnet(), Version, BuildID)
 	}
 
-	// Run the audit
-	a := auditor.New(c)
-	report, err := a.Run(ctx)
-	if err != nil {
-		return fmt.Errorf("audit failed: %w", err)
-	}
-
-	// Apply filters
-	suggestions := report.Suggestions
-
-	// Load and apply ignore file
+	// Load the ignore file before running the audit: ACL-011 consults it
+	// directly while building its per-tag reach table, so a suppressed tag
+	// can be left out without silencing the whole check (see checkTagReach).
+	var ignoreList *types.IgnoreList
 	var ignoredPath string
 	if !noIgnore {
-		var ignoreList *types.IgnoreList
 		if ignoreFile != "" {
 			// User-specified ignore file
 			var err error
@@ -186,19 +178,31 @@ func runAudit(cmd *cobra.Command, args []string) error {
 			// Try default locations
 			ignoreList, ignoredPath = types.LoadIgnoreFiles()
 		}
+	}
 
-		if ignoreList.Count() > 0 {
-			var ignored []string
-			suggestions, ignored = types.FilterIgnored(suggestions, ignoreList)
-			// Recorded on the report so that --json shows the suppression too:
-			// the ignore file may come from the working directory rather than
-			// from whoever is reading the output.
-			report.IgnoreFile = ignoredPath
-			report.Ignored = ignored
-			if !jsonOutput {
-				fmt.Printf("  Using ignore file: %s (%d rules, %d finding(s) suppressed)\n\n",
-					ignoredPath, ignoreList.Count(), len(ignored))
-			}
+	// Run the audit
+	a := auditor.New(c)
+	report, err := a.Run(ctx, ignoreList)
+	if err != nil {
+		return fmt.Errorf("audit failed: %w", err)
+	}
+
+	// Apply filters
+	suggestions := report.Suggestions
+
+	// Apply the ignore file to the findings it doesn't already cover (ACL-011
+	// applied its per-item rules while running above).
+	if ignoreList != nil && ignoreList.Count() > 0 {
+		var ignored []string
+		suggestions, ignored = types.FilterIgnored(suggestions, ignoreList)
+		// Recorded on the report so that --json shows the suppression too:
+		// the ignore file may come from the working directory rather than
+		// from whoever is reading the output.
+		report.IgnoreFile = ignoredPath
+		report.Ignored = ignored
+		if !jsonOutput {
+			fmt.Printf("  Using ignore file: %s (%d rules, %d finding(s) suppressed)\n\n",
+				ignoredPath, ignoreList.Count(), len(ignored))
 		}
 	}
 

@@ -35,3 +35,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Superpowers workflow artifacts (specs, plans, session ledgers)
+.superpowers/
+docs/superpowers/

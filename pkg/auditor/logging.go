@@ -114,7 +114,8 @@ func (l *LoggingAuditor) checkNetworkFlowLogs(tc *TailnetContext) types.Suggesti
 
 	if !settings.NetworkFlowLoggingOn {
 		finding.Pass = false
-		finding.Description = "Network flow logs are disabled. Connections between devices are not recorded, leaving no audit trail of tailnet traffic."
+		finding.Severity = types.Low
+		finding.Description = "Network flow logs are disabled. Connections between devices are not recorded, leaving no audit trail of tailnet traffic. Flow logs are reported by both ends of a connection, so they still record a node that suppresses its own telemetry."
 		finding.Details = "Confirmed via the Tailscale API (networkFlowLoggingOn is false)."
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,

@@ -43,6 +43,12 @@ var (
 
 	// ErrTimeout indicates the request timed out
 	ErrTimeout = errors.New("request timed out")
+
+	// ErrProjectedResponse indicates the API returned records carrying only
+	// their identifiers, so the fields the checks read are absent. The checks
+	// cannot tell an absent field from a benign value, so the read fails
+	// rather than handing them a listing that looks clean because it is empty.
+	ErrProjectedResponse = errors.New("API returned identifiers only")
 )
 
 // APIError wraps an API error with classification and context
@@ -336,9 +342,10 @@ const (
 // machine auth keys; the same endpoint also returns API access tokens, OAuth
 // clients and federated identities.
 const (
-	KeyTypeAuth   = "auth"
-	KeyTypeAPI    = "api"
-	KeyTypeClient = "client"
+	KeyTypeAuth      = "auth"
+	KeyTypeAPI       = "api"
+	KeyTypeClient    = "client"
+	KeyTypeFederated = "federated"
 )
 
 // rawGet performs a GET against the API and decodes the JSON response into out.
@@ -454,6 +461,9 @@ func (c *Client) GetDevice(ctx context.Context, deviceID string) (*Device, error
 // calling user, and for an OAuth-derived token it returns the tailnet's OAuth
 // clients rather than its auth keys. Callers that want machine auth keys should
 // filter on Key.KeyType == KeyTypeAuth.
+//
+// A response carrying nothing but identifiers is rejected rather than returned;
+// see projectedKeys.
 func (c *Client) GetKeys(ctx context.Context) ([]Key, error) {
 	if err := c.wait(ctx); err != nil {
 		return nil, err
@@ -462,7 +472,44 @@ func (c *Client) GetKeys(ctx context.Context) ([]Key, error) {
 	if err != nil {
 		return nil, classifyError(err, "GetKeys", "auth keys")
 	}
+	if projectedKeys(keys) {
+		return nil, &APIError{
+			Op:         "GetKeys",
+			Resource:   "auth keys",
+			Err:        ErrProjectedResponse,
+			Kind:       ErrProjectedResponse,
+			Suggestion: "The keys listing came back without key types, so no key could be classified. Re-run the audit; if this persists, the API is returning identifiers only and the key checks cannot run.",
+		}
+	}
 	return keys, nil
+}
+
+// projectedKeys reports whether a keys listing came back with only the
+// identifiers set.
+//
+// The SDK documents KeysResource.List as returning keys for which "the only
+// fields set ... will be its identifier". We have not seen the live API do
+// that - AUTH-001 to AUTH-004 read the capability fields today and work - but
+// the failure direction if it ever does is unacceptable. Every key would
+// arrive with an empty KeyType, GetFederatedIdentities would match none of
+// them and return an empty slice, and GetAuthKeys, which deliberately
+// tolerates an empty KeyType, would admit all of them with no capabilities
+// set. AUTH-001 to AUTH-006 and LOG-006 would then all report clean on data
+// they never saw.
+//
+// A listing where only some keys lack a KeyType is left alone: that is the
+// case GetAuthKeys tolerates on purpose. Only a listing where every entry
+// lacks one looks like a projection.
+func projectedKeys(keys []Key) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	for _, key := range keys {
+		if key.KeyType != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // GetAuthKeys fetches only the machine auth keys in the tailnet, excluding
@@ -500,6 +547,29 @@ func (c *Client) GetOAuthClients(ctx context.Context) ([]Key, error) {
 		}
 	}
 	return clients, nil
+}
+
+// filterFederatedIdentities keeps the live federated identities from a key
+// listing, dropping revoked and invalidated entries.
+func filterFederatedIdentities(keys []Key) []Key {
+	identities := make([]Key, 0, len(keys))
+	for _, key := range keys {
+		if key.KeyType == KeyTypeFederated && !key.Invalid && key.Revoked.IsZero() {
+			identities = append(identities, key)
+		}
+	}
+	return identities
+}
+
+// GetFederatedIdentities fetches the tailnet's workload identity federation
+// entries, which the admin console calls trust credentials. They arrive from
+// the same keys endpoint as auth keys and OAuth clients.
+func (c *Client) GetFederatedIdentities(ctx context.Context) ([]Key, error) {
+	keys, err := c.GetKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterFederatedIdentities(keys), nil
 }
 
 // GetKey fetches details for a specific key

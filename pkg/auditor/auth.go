@@ -3,6 +3,7 @@ package auditor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Adversis/tailsnitch/pkg/client"
@@ -12,10 +13,18 @@ import (
 // AuthAuditor checks for authentication and key management issues
 type AuthAuditor struct {
 	client *client.Client
+
+	// policy, policyParsed and devices are set by Audit from its parameters so
+	// the check* methods can annotate a flagged key with what its tags reach.
+	// policyParsed being false, or devices being empty, means reach could not
+	// be computed and no annotation is added - see reachNote.
+	policy       ACLPolicy
+	policyParsed bool
+	devices      []*client.Device
 }
 
 // authKeyChecks are the checks that read the tailnet's machine auth keys.
-var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004"}
+var authKeyChecks = []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005", "AUTH-006"}
 
 // NewAuthAuditor creates a new auth auditor
 func NewAuthAuditor(c *client.Client) *AuthAuditor {
@@ -62,8 +71,39 @@ func (k keyInfo) label() string {
 	return k.ID
 }
 
-// Audit performs authentication-related security checks
-func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// reachNote describes what a key's tags reach, for readers deciding whether a
+// flagged key matters. It returns an empty string when reach could not be
+// computed, so a figure is never printed that was not derived from real data.
+func reachNote(tags []string, policy ACLPolicy, policyParsed bool, devices []*client.Device) string {
+	if !policyParsed || len(devices) == 0 || len(tags) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, tag := range tags {
+		r := ComputeReach(tag, policy, devices)
+		switch {
+		case r.Wildcard:
+			parts = append(parts, fmt.Sprintf("%s reaches every device", tag))
+		default:
+			part := fmt.Sprintf("%s reaches %d of %d devices", tag, len(r.Devices), r.TotalDevices)
+			if len(r.Routed) > 0 {
+				part += fmt.Sprintf(" and routes to %s", r.Routed[0].CIDR)
+			}
+			parts = append(parts, part)
+		}
+	}
+	return "Reach: " + strings.Join(parts, "; ") + " (see ACL-011)"
+}
+
+// Audit performs authentication-related security checks. policy and
+// policyParsed are the tailnet's pre-fetched ACL policy, and devices is the
+// tailnet's device inventory; both are shared from Auditor.Run and stored on
+// the auditor so the auth-key findings can be annotated with device reach.
+func (a *AuthAuditor) Audit(ctx context.Context, policy ACLPolicy, policyParsed bool, devices []*client.Device) ([]types.Suggestion, error) {
+	a.policy = policy
+	a.policyParsed = policyParsed
+	a.devices = devices
+
 	var findings []types.Suggestion
 
 	// Get the tailnet's machine auth keys. The keys endpoint also returns API
@@ -108,6 +148,19 @@ func (a *AuthAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// AUTH-004: Informational - ephemeral key usage
 	findings = append(findings, a.checkEphemeralKeyUsage(keys))
 
+	// AUTH-005 and AUTH-006: workload identity federation not in use, and
+	// federated identity subject breadth. Federated identities come from the
+	// same keys endpoint as auth keys, so a fetch failure here is reported as
+	// not-evaluated for both checks, same as an auth key read failure.
+	identities, idErr := a.client.GetFederatedIdentities(ctx)
+	if idErr != nil {
+		findings = append(findings, federationFetchFailed("AUTH-005", idErr))
+		findings = append(findings, federationFetchFailed("AUTH-006", idErr))
+	} else {
+		findings = append(findings, a.checkFederationInUse(keys, identities))
+		findings = append(findings, a.checkFederatedIdentityConfig(identities))
+	}
+
 	return findings, nil
 }
 
@@ -131,7 +184,11 @@ func (a *AuthAuditor) checkReusableKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				desc += fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			reusableKeys = append(reusableKeys, fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry))
+			line := fmt.Sprintf("%s (expires in %d days)", key.label(), key.DaysToExpiry)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			reusableKeys = append(reusableKeys, line)
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
 				Name:        key.label(),
@@ -172,7 +229,11 @@ func (a *AuthAuditor) checkLongExpiryKeys(keys []keyInfo) types.Suggestion {
 	var fixableItems []types.FixableItem
 	for _, key := range keys {
 		if key.DaysToExpiry > 90 {
-			longExpiryKeys = append(longExpiryKeys, fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry))
+			line := fmt.Sprintf("%s: %d days until expiry", key.label(), key.DaysToExpiry)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			longExpiryKeys = append(longExpiryKeys, line)
 			fixableItems = append(fixableItems, types.FixableItem{
 				ID:          key.ID,
 				Name:        key.label(),
@@ -216,7 +277,11 @@ func (a *AuthAuditor) checkPreauthorizedKeys(keys []keyInfo) types.Suggestion {
 			if len(key.Tags) > 0 {
 				tagInfo = fmt.Sprintf(", tags: %v", key.Tags)
 			}
-			preauthorizedKeys = append(preauthorizedKeys, fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo))
+			line := fmt.Sprintf("%s (expires in %d days%s)", key.label(), key.DaysToExpiry, tagInfo)
+			if note := reachNote(key.Tags, a.policy, a.policyParsed, a.devices); note != "" {
+				line += " — " + note
+			}
+			preauthorizedKeys = append(preauthorizedKeys, line)
 		}
 	}
 
@@ -291,5 +356,230 @@ func (a *AuthAuditor) checkEphemeralKeyUsage(keys []keyInfo) types.Suggestion {
 		}
 	}
 
+	return finding
+}
+
+// isMigrationCandidate reports whether a key is the kind of long-lived workload
+// credential that workload identity federation replaces: reusable, not
+// ephemeral, carrying tags, and still valid.
+func (k keyInfo) isMigrationCandidate() bool {
+	return k.Reusable && !k.Ephemeral && len(k.Tags) > 0 && k.DaysToExpiry >= 0
+}
+
+// federationFetchFailed builds the not-evaluated finding for a failure to
+// read the tailnet's federated identities, for either AUTH-005 or AUTH-006 -
+// both depend on the same fetch. Unlike the auth-keys read failure above, no
+// AUTH-ERR finding is emitted on this path, so the reason must carry the
+// error itself rather than point at a finding that was never raised.
+func federationFetchFailed(id string, err error) types.Suggestion {
+	return types.NotEvaluated(id,
+		fmt.Sprintf("The tailnet's federated identities could not be read: %v", err))
+}
+
+func (a *AuthAuditor) checkFederationInUse(keys []keyInfo, identities []client.Key) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "AUTH-005",
+		Title:       "Workload identity federation not in use",
+		Severity:    types.Medium,
+		Category:    types.Authentication,
+		Description: "Workload identity federation lets a CI job prove its cloud identity with a short-lived OIDC token, so there is no long-lived key to store or leak.",
+		Remediation: "Create a trust credential for each CI workload and remove the static auth key it replaces. Pin the subject to a specific workload rather than a wildcard.",
+		Source:      "https://tailscale.com/docs/features/workload-identity-federation",
+		Pass:        true,
+	}
+
+	covered := make(map[string]bool)
+	for _, id := range identities {
+		for _, tag := range id.Tags {
+			covered[tag] = true
+		}
+	}
+
+	var details []string
+	uncovered := false
+	for _, key := range keys {
+		if !key.isMigrationCandidate() {
+			continue
+		}
+		var missing []string
+		for _, tag := range key.Tags {
+			if !covered[tag] {
+				missing = append(missing, tag)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		uncovered = true
+		details = append(details, fmt.Sprintf("%s: reusable, expires in %d days, mints %v with no trust credential",
+			key.label(), key.DaysToExpiry, missing))
+	}
+
+	if !uncovered {
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Details = details
+	if len(identities) == 0 {
+		finding.Description = fmt.Sprintf("Found %d reusable auth key(s) provisioning tagged workloads, and no trust credentials at all. A key like this is what an attacker reads out of a secret store and reuses to enroll nodes.", len(details))
+	} else {
+		finding.Severity = types.Low
+		finding.Description = fmt.Sprintf("Trust credentials exist, but %d reusable auth key(s) still mint tags that none of them cover.", len(details))
+	}
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Create a trust credential for these workloads, then delete the static key",
+		AdminURL:    "https://login.tailscale.com/admin/settings/keys",
+		DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
+		AutoFixSafe: false,
+	}
+	return finding
+}
+
+// breadth classifies how much a federated identity subject admits.
+type breadth int
+
+const (
+	breadthPinned breadth = iota
+	breadthTrailingWildcard
+	breadthLeadingWildcard
+	breadthAny
+)
+
+// issuerHints map a recognized issuer host to remediation wording. They shape
+// the message only. The verdict is issuer-agnostic so that a provider changing
+// its subject grammar cannot silently invalidate a check.
+var issuerHints = map[string]string{
+	"token.actions.githubusercontent.com": "Pin the subject to one repository and ref, for example repo:ORG/REPO:ref:refs/heads/main.",
+	"accounts.google.com":                 "Pin the subject to the service account that runs the workload.",
+	"sts.amazonaws.com":                   "Pin the subject to the specific role the workload assumes.",
+}
+
+// subjectBreadth classifies a subject by where its wildcard sits. A subject
+// that is nothing but wildcards (and the separators around them) admits every
+// principal the issuer vouches for.
+func subjectBreadth(subject string) breadth {
+	s := strings.TrimSpace(subject)
+	if strings.Trim(s, "*:/ ") == "" {
+		return breadthAny
+	}
+	if !strings.Contains(s, "*") {
+		return breadthPinned
+	}
+	if strings.HasPrefix(s, "*") {
+		return breadthLeadingWildcard
+	}
+	return breadthTrailingWildcard
+}
+
+// identityUnreadable reports whether a trust credential arrived with none of
+// the fields this check reads.
+//
+// Creating a federated identity through the API requires an issuer and a
+// subject, so an entry with an empty subject, an empty issuer and an empty
+// audience cannot have been configured that way: the fields are missing, not
+// permissive. Passing its empty subject to subjectBreadth would classify it
+// as a wildcard and fail the check high on a detail line that reads
+// `subject "" accepts any principal issued by .`
+func identityUnreadable(id client.Key) bool {
+	return strings.TrimSpace(id.Subject) == "" &&
+		strings.TrimSpace(id.Issuer) == "" &&
+		strings.TrimSpace(id.Audience) == ""
+}
+
+// checkFederatedIdentityConfig audits the configuration quality of trust
+// credentials that are already in use (AUTH-005 covers whether they exist at
+// all). A subject that is nothing but a wildcard lets any principal the
+// issuer will vouch for mint the credential's tags - a boundary crossing, so
+// it fails high regardless of issuer. A wildcard confined to one end of the
+// subject is narrower and reported without escalating severity; the same
+// goes for an empty audience or absent claim rules, which are supporting
+// facts rather than verdicts on their own.
+//
+// A credential whose fields could not be read is assessed as nothing at all.
+// If that leaves the check with nothing else to report, it reports as not
+// evaluated rather than passing, because part of it did not run.
+func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "AUTH-006",
+		Title:       "Federated identity subject admits unintended principals",
+		Severity:    types.High,
+		Category:    types.Authentication,
+		Description: "A trust credential's subject decides which workloads can mint its tags. A wildcard subject widens that to everything the issuer will vouch for.",
+		Remediation: "Pin each subject to one workload. Set an audience so a token minted for another relying party cannot be replayed, and add claim rules to tighten further.",
+		Source:      "https://tailscale.com/docs/features/workload-identity-federation",
+		Pass:        true,
+	}
+
+	var wideOpen, narrower, notes, unreadable []string
+	for _, id := range identities {
+		label := id.ID
+		if id.Description != "" {
+			label = fmt.Sprintf("%s (%s)", id.Description, id.ID)
+		}
+		if identityUnreadable(id) {
+			unreadable = append(unreadable, fmt.Sprintf(
+				"%s: subject, issuer and audience are all empty, so this credential's breadth could not be assessed", label))
+			continue
+		}
+		b := subjectBreadth(id.Subject)
+		switch b {
+		case breadthAny:
+			hint := "Pin the subject to a single workload."
+			if h, ok := issuerHints[id.Issuer]; ok {
+				hint = h
+			}
+			wideOpen = append(wideOpen, fmt.Sprintf("%s: subject %q accepts any principal issued by %s. %s",
+				label, id.Subject, id.Issuer, hint))
+		case breadthLeadingWildcard, breadthTrailingWildcard:
+			narrower = append(narrower, fmt.Sprintf("%s: subject %q contains a wildcard", label, id.Subject))
+		}
+
+		// Supporting facts. Neither sets severity on its own; an empty audience
+		// alongside a wildcard subject is the pairing that matters.
+		if strings.TrimSpace(id.Audience) == "" {
+			notes = append(notes, fmt.Sprintf("%s: no audience set, so a token minted for another relying party is not rejected", label))
+		}
+		if len(id.CustomClaimRules) == 0 && b != breadthPinned {
+			notes = append(notes, fmt.Sprintf("%s: wildcard subject with no claim rules to tighten it", label))
+		}
+	}
+
+	if len(wideOpen) > 0 {
+		finding.Pass = false
+		finding.Details = append(append(append(wideOpen, narrower...), notes...), unreadable...)
+		finding.Description = fmt.Sprintf("Found %d trust credential(s) whose subject accepts any principal the issuer vouches for.", len(wideOpen))
+		finding.Fix = &types.FixInfo{
+			Type:        types.FixTypeManual,
+			Description: "Narrow each subject to a single workload",
+			AdminURL:    "https://login.tailscale.com/admin/settings/keys",
+			DocURL:      "https://tailscale.com/docs/features/workload-identity-federation",
+		}
+		return finding
+	}
+
+	if len(narrower) > 0 || len(notes) > 0 {
+		finding.Pass = false
+		finding.Severity = types.Low
+		finding.Details = append(append(narrower, notes...), unreadable...)
+		finding.Description = "Trust credentials are in use. These carry a wildcard subject or no audience, which may be intended but is worth confirming."
+		return finding
+	}
+
+	// Nothing was found to report, and at least one credential was never
+	// assessed. Passing here would present a control that did not fully run
+	// as a satisfied one.
+	if len(unreadable) > 0 {
+		return types.NotEvaluated("AUTH-006", fmt.Sprintf(
+			"%d trust credential(s) arrived with no subject, no issuer and no audience, so the fields this check reads could not be read: %s",
+			len(unreadable), strings.Join(unreadable, "; ")))
+	}
+
+	if len(identities) > 0 {
+		finding.Description = fmt.Sprintf("All %d trust credential(s) pin their subject.", len(identities))
+	} else {
+		finding.Description = "No trust credentials are configured."
+	}
 	return finding
 }

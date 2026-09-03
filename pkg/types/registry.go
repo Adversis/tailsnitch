@@ -59,12 +59,15 @@ func NewCheckRegistry() *CheckRegistry {
 		{ID: "ACL-008", Title: "No groups defined in ACL policy", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "ACL-009", Title: "Using legacy ACLs instead of grants", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "ACL-010", Title: "Taildrop file sharing configuration", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2", "C1.1"}},
+		{ID: "ACL-011", Title: "Tag reach", Category: AccessControl, CCMappings: []string{"CC6.1", "CC6.2"}},
 
 		// Auth checks - CC6.1 (Logical Access), CC6.2 (Access Control), CC6.3 (Access Removal)
 		{ID: "AUTH-001", Title: "Reusable auth keys exist", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
 		{ID: "AUTH-002", Title: "Auth keys with long expiry period", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
 		{ID: "AUTH-003", Title: "Pre-authorized auth keys bypass device approval", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2"}},
 		{ID: "AUTH-004", Title: "Non-ephemeral keys may be used for CI/CD", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
+		{ID: "AUTH-005", Title: "Workload identity federation not in use", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2", "CC6.3"}},
+		{ID: "AUTH-006", Title: "Federated identity subject admits unintended principals", Category: Authentication, CCMappings: []string{"CC6.1", "CC6.2"}},
 
 		// Device checks - CC6.1 (Logical Access), CC6.3 (Access Removal), CC7.1 (System Operations)
 		{ID: "DEV-001", Title: "Tagged devices with key expiry disabled", Category: DeviceSecurity, CCMappings: []string{"CC6.1", "CC6.3"}},

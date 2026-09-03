@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tailscale/hujson"
 
@@ -91,8 +92,10 @@ type AutoApprovers struct {
 	ExitNode []string            `json:"exitNode"`
 }
 
-// Audit performs ACL-related security checks
-func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
+// Audit performs ACL-related security checks. devices and devErr are the
+// tailnet's device inventory, pre-fetched once in Auditor.Run and shared with
+// the Auth auditor; ACL-011 consumes them to compute tag reach.
+func (a *ACLAuditor) Audit(ctx context.Context, devices []*client.Device, devErr error, ignoreList *types.IgnoreList) ([]types.Suggestion, error) {
 	var findings []types.Suggestion
 
 	// Get ACL in HuJSON format for raw content
@@ -167,6 +170,17 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 	// ACL-010: Check Taildrop configuration
 	findings = append(findings, a.checkTaildropConfig(policy))
 
+	// ACL-011: Tag reach. This needs both the device inventory and the auth
+	// keys that can mint tags; if the device inventory itself could not be
+	// read, none of the reach it would report can be trusted.
+	keys, keysErr := a.client.GetAuthKeys(ctx)
+	if devErr != nil {
+		findings = append(findings, types.NotEvaluated("ACL-011",
+			fmt.Sprintf("The device inventory could not be read: %v", devErr)))
+	} else {
+		findings = append(findings, a.checkTagReach(policy, devices, keys, keysErr, ignoreList))
+	}
+
 	return findings, nil
 }
 
@@ -174,7 +188,7 @@ func (a *ACLAuditor) Audit(ctx context.Context) ([]types.Suggestion, error) {
 // document. ACL-001 is absent because it reports an unparsed policy itself.
 var aclPolicyChecks = []string{
 	"ACL-002", "ACL-003", "ACL-004", "ACL-005", "ACL-006",
-	"ACL-007", "ACL-008", "ACL-009", "ACL-010",
+	"ACL-007", "ACL-008", "ACL-009", "ACL-010", "ACL-011",
 }
 
 // policyFields records which top-level keys the tailnet policy file defines.
@@ -789,5 +803,263 @@ func (a *ACLAuditor) checkTaildropConfig(policy ACLPolicy) types.Suggestion {
 		}
 	}
 
+	return finding
+}
+
+// mintableTags returns the tags any live auth key can assign to a new node.
+func mintableTags(keys []client.Key) map[string]bool {
+	tags := make(map[string]bool)
+	for _, key := range keys {
+		if !key.Expires.IsZero() && time.Until(key.Expires) < 0 {
+			continue
+		}
+		for _, tag := range key.Capabilities.Devices.Create.Tags {
+			tags[tag] = true
+		}
+	}
+	return tags
+}
+
+// reusablyMintableTags returns the tags a reusable auth key can assign. A
+// reusable key keeps working after it leaks, which is a property of the
+// credential rather than a judgement about the environment, so it may raise
+// severity.
+func reusablyMintableTags(keys []client.Key) map[string]bool {
+	tags := make(map[string]bool)
+	for _, key := range keys {
+		if !key.Capabilities.Devices.Create.Reusable {
+			continue
+		}
+		if !key.Expires.IsZero() && time.Until(key.Expires) < 0 {
+			continue
+		}
+		for _, tag := range key.Capabilities.Devices.Create.Tags {
+			tags[tag] = true
+		}
+	}
+	return tags
+}
+
+// suppressedTagsPresent returns the tags this policy actually has that the
+// ignore file also names for ACL-011 - the subset of ItemsFor("ACL-011")
+// that AllTagReach found, so a rule naming a tag the policy doesn't have
+// does not falsely claim something was suppressed.
+func suppressedTagsPresent(ignoreList *types.IgnoreList, reaches []Reach) []string {
+	ignored := ignoreList.ItemsFor("ACL-011")
+	if len(ignored) == 0 {
+		return nil
+	}
+	ignoredSet := make(map[string]bool, len(ignored))
+	for _, tag := range ignored {
+		ignoredSet[tag] = true
+	}
+	var present []string
+	for _, r := range reaches {
+		if ignoredSet[r.Tag] {
+			present = append(present, r.Tag)
+		}
+	}
+	return present
+}
+
+// describeReach renders one tag's reach as report lines.
+func describeReach(r Reach, mintable, reusable bool) []string {
+	var lines []string
+	switch {
+	case r.Wildcard:
+		lines = append(lines, fmt.Sprintf("%s: reaches every device in the tailnet (a rule grants *:*)", r.Tag))
+	default:
+		allPortsCount := 0
+		for _, d := range r.Devices {
+			if d.AllPorts {
+				allPortsCount++
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s: reaches %d of %d devices, %d of them on all ports",
+			r.Tag, len(r.Devices), r.TotalDevices, allPortsCount))
+	}
+	for _, routed := range r.Routed {
+		lines = append(lines, fmt.Sprintf("    routes to %s via %s", routed.CIDR, routed.Router.Name))
+	}
+	for _, e := range r.Egress {
+		lines = append(lines, fmt.Sprintf("    egress to the internet via exit node %s", e.Name))
+	}
+	for _, u := range r.Unresolved {
+		lines = append(lines, fmt.Sprintf("    unresolved destination, not counted: %s", u))
+	}
+	if mintable {
+		how := "an auth key"
+		if reusable {
+			how = "a reusable auth key"
+		}
+		lines = append(lines, fmt.Sprintf("    %s can assign this tag", how))
+	}
+	return lines
+}
+
+// checkTagReach reports what every tag in the policy can reach, and fails
+// only when a tag an auth key can actually mint crosses a trust boundary: it
+// reaches every device, a routed subnet, or internet egress. A tag's device
+// count never sets severity - the tool has no way to know whether reaching
+// 47 devices is correct for that tag or catastrophic. Reusability of the
+// minting key is a structural property of the credential and may raise
+// severity from Medium to High.
+func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, keys []client.Key, keysErr error, ignoreList *types.IgnoreList) types.Suggestion {
+	finding := types.Suggestion{
+		ID:          "ACL-011",
+		Title:       "Tag reach",
+		Severity:    types.Informational,
+		Category:    types.AccessControl,
+		Description: "What a tag can reach is what a node carrying that tag can reach. A tag an auth key can assign is reachable by anyone holding that key.",
+		Remediation: "Narrow the rules that name this tag as a source, or replace the auth key that assigns it with a trust credential so there is no key to steal.",
+		Source:      "https://tailscale.com/docs/features/tags",
+		Pass:        true,
+	}
+
+	// An empty inventory that arrived without an error is indistinguishable
+	// from a device list that was never populated. Reach computed against it
+	// would report "reaches 0 of 0 devices" for every tag and could return a
+	// clean sweep, so say the check did not run instead. reachNote in the
+	// auth checks guards the same condition the same way.
+	if len(devices) == 0 {
+		return types.NotEvaluated("ACL-011",
+			"The device inventory came back empty, so there is nothing to compute reach against. "+
+				"Every tag would report reaching 0 of 0 devices, which cannot be told apart from a tailnet with no devices.")
+	}
+
+	reaches := AllTagReach(policy, devices)
+	if len(reaches) == 0 {
+		finding.Description = "The policy defines no tags."
+		return finding
+	}
+
+	mintable := mintableTags(keys)
+	reusable := reusablyMintableTags(keys)
+
+	// The subset of the ignore file's ACL-011 rules that actually name a tag
+	// this policy has, used below to say when the reach table or the
+	// manual-check list has silently shrunk. A rule naming a tag the policy
+	// doesn't have suppresses nothing, so it is not counted.
+	suppressedTags := suppressedTagsPresent(ignoreList, reaches)
+
+	var details []string
+	var offenders []string
+	var suppressedOffenders []string
+	worst := types.Informational
+
+	for _, r := range reaches {
+		isMintable := keysErr == nil && mintable[r.Tag]
+		isReusable := keysErr == nil && reusable[r.Tag]
+
+		// A tag named in the ignore file is left out of the reach table
+		// entirely, whether or not it turns out to be an offender below.
+		tagIgnored := ignoreList.IsItemIgnored("ACL-011", r.Tag)
+		if !tagIgnored {
+			details = append(details, describeReach(r, isMintable, isReusable)...)
+		}
+
+		if !isMintable {
+			continue
+		}
+		crossings := []string{}
+		if r.Wildcard {
+			crossings = append(crossings, "reaches every device")
+		}
+		if len(r.Routed) > 0 {
+			crossings = append(crossings, "routes past the tailnet edge")
+		}
+		if len(r.Egress) > 0 {
+			crossings = append(crossings, "carries internet egress")
+		}
+		if len(crossings) == 0 {
+			continue
+		}
+		entry := fmt.Sprintf("%s: %s", r.Tag, strings.Join(crossings, ", "))
+		if tagIgnored {
+			// Suppressed: does not count toward severity or Pass. It is
+			// still tracked separately (not silently dropped) so the "every
+			// offender suppressed" case below can be told apart from a
+			// tailnet that genuinely has nothing crossing a boundary.
+			suppressedOffenders = append(suppressedOffenders, entry)
+			continue
+		}
+		offenders = append(offenders, entry)
+		sev := types.Medium
+		if isReusable {
+			sev = types.High
+		}
+		if sev.Order() < worst.Order() {
+			worst = sev
+		}
+	}
+
+	if keysErr != nil {
+		finding.Pass = false
+		finding.Description = "Tag reach was computed, but the auth keys could not be read, so it is unknown which tags a key can assign."
+		finding.Remediation = "Grant the credential the auth_keys:read scope, then re-run the audit to determine which tags an auth key can assign."
+		manualDetails := []string{
+			fmt.Sprintf("Could not read auth keys: %v", keysErr),
+			"MANUAL CHECK REQUIRED: confirm which of these tags an auth key can assign.",
+		}
+		if len(suppressedTags) > 0 {
+			// This list is exactly what someone must now check by hand. A tag
+			// that vanished from it because of an ignore file written for the
+			// boundary-crossing question above must not vanish silently here
+			// too - the two questions are different, and suppressing one
+			// does not answer the other.
+			manualDetails = append(manualDetails, fmt.Sprintf(
+				"%d tag(s) were suppressed by the ignore file and are not listed below; confirm those manually too.",
+				len(suppressedTags)))
+		}
+		finding.Details = append(manualDetails, details...)
+		return finding
+	}
+
+	if len(offenders) == 0 && len(suppressedOffenders) == 0 {
+		finding.Description = fmt.Sprintf("Reach computed for %d tag(s). No tag that an auth key can assign crosses a trust boundary.", len(reaches))
+		finding.Details = details
+		if len(suppressedTags) > 0 {
+			// len(reaches) above still counts every tag the policy defines,
+			// suppressed or not; without this, the count and the table it
+			// describes would disagree about how many tags there are.
+			finding.Details = append(append([]string{}, details...), fmt.Sprintf(
+				"%d tag(s) were suppressed by the ignore file and are not shown above.", len(suppressedTags)))
+		}
+		return finding
+	}
+
+	if len(offenders) == 0 {
+		// Every tag that crossed a boundary was suppressed by the ignore
+		// file. Suppressing the last offender must not read as a satisfied
+		// control: the finding stays, at Informational severity and with
+		// Pass still false, as evidence that something was suppressed
+		// rather than disappearing into a clean result.
+		finding.Pass = false
+		finding.Severity = types.Informational
+		finding.Description = fmt.Sprintf(
+			"%d tag(s) that an auth key can assign crossed a trust boundary; all were suppressed by the ignore file.",
+			len(suppressedOffenders))
+		suppressedNote := []string{fmt.Sprintf("%d tag(s) crossing a boundary were suppressed by the ignore file.", len(suppressedOffenders))}
+		if len(details) > 0 {
+			suppressedNote = append(append(suppressedNote, "", "Reach for every unsuppressed tag:"), details...)
+		}
+		finding.Details = suppressedNote
+		return finding
+	}
+
+	finding.Pass = false
+	finding.Severity = worst
+	finding.Description = fmt.Sprintf("%d tag(s) that an auth key can assign cross a trust boundary.", len(offenders))
+	boundaryLines := append([]string{"Tags crossing a boundary:"}, offenders...)
+	if len(suppressedOffenders) > 0 {
+		boundaryLines = append(boundaryLines, fmt.Sprintf("(%d additional tag(s) crossing a boundary suppressed by the ignore file)", len(suppressedOffenders)))
+	}
+	finding.Details = append(append(boundaryLines, "", "Reach for every unsuppressed tag:"), details...)
+	finding.Fix = &types.FixInfo{
+		Type:        types.FixTypeManual,
+		Description: "Narrow these tags' rules, or replace the auth key that assigns them",
+		AdminURL:    "https://login.tailscale.com/admin/acls",
+		DocURL:      "https://tailscale.com/docs/features/tags",
+	}
 	return finding
 }
