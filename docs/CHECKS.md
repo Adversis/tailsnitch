@@ -1,14 +1,14 @@
 # Tailsnitch Security Checks Reference
 
-This document provides detailed information about all 54 security checks performed by Tailsnitch, plus the SYS-* diagnostics emitted when a control could not be evaluated.
+This document provides detailed information about all 57 security checks performed by Tailsnitch, plus the SYS-* diagnostics emitted when a control could not be evaluated.
 
 ## Check Categories
 
 | Category | Prefix | Count | Description |
 |----------|--------|-------|-------------|
-| Access Controls | ACL | 10 | ACL policy misconfigurations |
-| Authentication & Keys | AUTH | 4 | Auth key security |
-| Device Security | DEV | 13 | Device configuration issues |
+| Access Controls | ACL | 11 | ACL policy misconfigurations |
+| Authentication & Keys | AUTH | 6 | Auth key security |
+| Device Security | DEV | 15 | Device configuration issues |
 | Network Exposure | NET | 7 | Network and routing concerns |
 | SSH & Device Security | SSH | 4 | SSH access controls |
 | Logging & Admin | LOG | 12 | Logging and administrative settings |
@@ -195,6 +195,42 @@ This document provides detailed information about all 54 security checks perform
 
 ---
 
+### ACL-011: Tag reach
+
+**Severity:** INFO, or MEDIUM/HIGH when a tag an auth key can assign crosses a trust boundary
+
+**Description:** What a tag can reach is what a node carrying that tag can reach. A tag that an auth key can assign is reachable by anyone holding that key, so a stolen key inherits everything its tags reach.
+
+**What it checks (needs `policy_file:read`, `devices:core:read` and `auth_keys:read`):**
+- Reach for every tag in `tagOwners`, resolved from the `acls` and `grants` rules whose source names that tag or `*`
+- Which devices each tag reaches and on which ports, plus routed CIDRs, exit-node egress, and destinations that could not be resolved
+- Which tags a live auth key can assign, and whether that key is reusable
+
+Reporting reach is the normal result and stays at INFO. The check fails only when a tag an auth key can assign crosses a trust boundary: it reaches a wildcard destination, a routed subnet, or the internet through an exit node. A reusable key makes that HIGH. A one-off key makes it MEDIUM.
+
+Severity never comes from a device count. Tailsnitch cannot tell whether a tag reaching 47 devices is correct for that tag or catastrophic, so the count is reported and never scored.
+
+If the auth keys cannot be read, reach is still reported but the check fails at INFO with a manual-check note: it is then unknown which tags a key can assign. If the device inventory cannot be read, the check reports as not evaluated, because no reach it would report can be trusted.
+
+**Suppressing a tag that is broad by design:**
+
+A monitoring or backup agent may reach everything on purpose. Name the tag in the ignore file:
+
+```
+# .tailsnitch-ignore
+ACL-011:tag:monitoring   # backup agent, reaches everything by design
+```
+
+The rest of the check still runs and still reports every other tag. Suppressing every tag that crosses a boundary does not make the check pass: the finding stays, at INFO, and says how many tags were suppressed.
+
+**Remediation:** Narrow the rules that name this tag as a source, or replace the auth key that assigns it with a trust credential so there is no key to steal.
+
+**Admin Console:** [Access Rules](https://login.tailscale.com/admin/acls)
+
+**Documentation:** [Tags](https://tailscale.com/docs/features/tags)
+
+---
+
 ## Authentication Checks (AUTH)
 
 ### AUTH-001: Reusable auth keys exist
@@ -262,6 +298,54 @@ This document provides detailed information about all 54 security checks perform
 **Admin Console:** [Auth Keys](https://login.tailscale.com/admin/settings/keys)
 
 **Documentation:** [Ephemeral Nodes](https://tailscale.com/docs/features/ephemeral-nodes)
+
+---
+
+### AUTH-005: Workload identity federation not in use
+
+**Severity:** MEDIUM (LOW when trust credentials exist but do not cover every tag)
+
+**Description:** Workload identity federation lets a CI job prove its cloud identity with a short-lived OIDC token, so there is no long-lived key to store or leak. A reusable auth key in a secret store is the credential an attacker reads and reuses to enroll nodes. The admin console calls a federated identity a **trust credential**.
+
+**What it checks:**
+- Auth keys that are reusable, not ephemeral, carry tags and have not expired — the keys federation is meant to replace
+- The tags every live trust credential can mint
+- Whether a trust credential covers each tag those keys mint
+
+MEDIUM when the tailnet has no trust credentials at all. LOW when trust credentials exist but a key still mints tags that none of them cover. The check passes when every such key's tags are covered, or when no key of that shape exists.
+
+Trust credentials come from the same keys listing as auth keys. If that listing cannot be read, this check reports as not evaluated rather than passing. The scope is expected to be `auth_keys:read`, which is the scope the keys listing needs for AUTH-001 to AUTH-004; this has not been confirmed against a live tailnet.
+
+**Remediation:** Create a trust credential for each CI workload and remove the static auth key it replaces. Pin the subject to a specific workload rather than a wildcard.
+
+**Admin Console:** [Keys](https://login.tailscale.com/admin/settings/keys)
+
+**Documentation:** [Workload Identity Federation](https://tailscale.com/docs/features/workload-identity-federation)
+
+---
+
+### AUTH-006: Federated identity subject admits unintended principals
+
+**Severity:** HIGH (LOW when only a narrower wildcard, a missing audience or absent claim rules were found)
+
+**Description:** A trust credential's subject decides which workloads can mint its tags. A subject that is nothing but a wildcard widens that to every principal the issuer will vouch for, which for a shared issuer such as GitHub Actions is far more than one repository.
+
+**What it checks:**
+- The subject of every live trust credential, classified as pinned, partly pinned with a wildcard, or nothing but wildcards and separators
+- Whether an audience is set
+- Whether custom claim rules narrow a wildcard subject
+
+A subject that is only wildcards and separators fails HIGH: any principal the issuer vouches for can mint that credential's tags. A subject that carries a wildcard but still pins part of the principal is narrower, so it is reported without raising severity. An empty audience and absent claim rules are supporting facts and never set severity on their own — an empty audience next to a wildcard subject is the pairing that matters. When only those narrower findings exist, the check reports LOW.
+
+The verdict is issuer-agnostic. Recognising the GitHub Actions, Google and AWS issuers only changes the remediation wording, so a provider that changes its subject grammar cannot silently invalidate the check.
+
+As with AUTH-005, a keys listing that cannot be read makes this check report as not evaluated rather than passing.
+
+**Remediation:** Pin each subject to one workload. Set an audience so a token minted for another relying party cannot be replayed, and add claim rules to tighten further.
+
+**Admin Console:** [Keys](https://login.tailscale.com/admin/settings/keys)
+
+**Documentation:** [Workload Identity Federation](https://tailscale.com/docs/features/workload-identity-federation)
 
 ---
 
@@ -737,7 +821,7 @@ A finding is strong evidence; a pass is not proof of absence.
 
 ### LOG-001: Network flow logs configuration
 
-**Severity:** INFO
+**Severity:** INFO (LOW when the API confirms flow logging is off)
 
 **Description:** Network flow logs record connections between devices. Disabled by default, available on Premium and Enterprise plans.
 

@@ -1,6 +1,6 @@
 # Tailsnitch
 
-A security auditor for Tailscale configurations. Tailsnitch scans your tailnet for 50+ misconfigurations, overly permissive access controls, and security best practice violations.
+A security auditor for Tailscale configurations. Tailsnitch scans your tailnet for 57 misconfigurations, overly permissive access controls, and security best practice violations.
 
 ## Quick Start
 
@@ -65,9 +65,9 @@ Create an OAuth client at: https://login.tailscale.com/admin/settings/oauth
 | Scope | Used for |
 |-------|----------|
 | `policy_file:read` | Tailnet policy file — ACL-*, NET-*, SSH-* |
-| `devices:core:read` | Device list — DEV-*, NET-* |
+| `devices:core:read` | Device list — DEV-*, NET-*, ACL-011 |
 | `dns:read` | DNS configuration — DNS-001, DEV-007 |
-| `auth_keys:read` | Machine auth keys — AUTH-* |
+| `auth_keys:read` | Machine auth keys — AUTH-*, ACL-011 |
 | `feature_settings:read` | Tailnet settings — DEV-008, DEV-009, DEV-014 |
 | `logs:network:read` | Network flow logging setting — LOG-001 |
 | `networking_settings:read` | HTTPS certificate setting — NET-004 |
@@ -80,6 +80,12 @@ Create an OAuth client at: https://login.tailscale.com/admin/settings/oauth
 
 Any scope you leave out only affects the checks that need it: those
 checks report that they could not read the setting rather than passing.
+
+AUTH-005 and AUTH-006 read the tailnet's federated identities, which the admin
+console calls trust credentials. They arrive from the same keys listing as auth
+keys, so `auth_keys:read` is expected to cover them. That has not been confirmed
+against a live tailnet. If the scope does not cover them, both checks report
+that they could not read the identities rather than passing.
 
 **Additional scopes for fix mode:**
 - `devices:core` - Delete devices, modify tags (requires tag selection)
@@ -298,7 +304,7 @@ tailsnitch --json | jq -r '
 
 ## Security Checks
 
-Tailsnitch performs 54 security checks across 7 categories. See [docs/CHECKS.md](docs/CHECKS.md) for detailed documentation of each check.
+Tailsnitch performs 57 security checks across 7 categories. See [docs/CHECKS.md](docs/CHECKS.md) for detailed documentation of each check.
 
 ### Critical Severity
 
@@ -313,9 +319,11 @@ Tailsnitch performs 54 security checks across 7 categories. See [docs/CHECKS.md]
 
 | ID | Check | Risk |
 |----|-------|------|
+| ACL-011 | Tag reach crosses a trust boundary | A stolen reusable key mints a tag that reaches everything |
 | AUTH-001 | Reusable auth keys | Unlimited device additions if stolen |
 | AUTH-002 | Long expiry auth keys | Extended exposure window |
 | AUTH-003 | Pre-authorized keys | Bypass device approval |
+| AUTH-006 | Federated identity subject too broad | Any principal the issuer vouches for can mint the tag |
 | DEV-001 | Tagged devices without key expiry | Indefinite access |
 | DEV-002 | User devices tagged | Persist after user removal |
 | DEV-010 | Tailnet Lock disabled | No protection against stolen keys |
@@ -331,6 +339,7 @@ Tailsnitch performs 54 security checks across 7 categories. See [docs/CHECKS.md]
 | ACL-004 | autogroup:member usage | External users included |
 | ACL-005 | AutoApprovers configured | Bypass route approval |
 | AUTH-004 | Non-ephemeral CI/CD keys | Stale devices accumulate |
+| AUTH-005 | Workload identity federation not in use | Long-lived keys stay stealable |
 | DEV-003 | Outdated clients | Potential vulnerabilities |
 | DEV-004 | Stale devices | Unused attack surface |
 | DEV-005 | Unauthorized devices | Pending approval queue |
@@ -344,6 +353,20 @@ Tailsnitch performs 54 security checks across 7 categories. See [docs/CHECKS.md]
 ### Informational
 
 Checks for logging configuration, DNS settings, user roles, and manual verification items.
+
+### Severity that depends on the finding
+
+Three checks rate what they find rather than carrying one fixed severity:
+
+- **ACL-011** reports every tag's reach at Informational. It fails only when a
+  tag an auth key can assign reaches a wildcard destination, a routed subnet or
+  exit-node egress: High if a reusable key assigns that tag, Medium if only a
+  one-off key does. A device count never sets severity.
+- **AUTH-005** reports Medium when the tailnet has no trust credentials at all,
+  and Low when trust credentials exist but a reusable key still mints tags none
+  of them cover.
+- **AUTH-006** reports High for a subject that is nothing but a wildcard, and
+  Low for a narrower wildcard, a missing audience or absent claim rules.
 
 ## Output Example
 
