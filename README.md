@@ -84,8 +84,11 @@ checks report that they could not read the setting rather than passing.
 AUTH-005 and AUTH-006 read the tailnet's federated identities, which the admin
 console calls trust credentials. They arrive from the same keys listing as auth
 keys, so `auth_keys:read` is expected to cover them. That has not been confirmed
-against a live tailnet. If the scope does not cover them, both checks report
-that they could not read the identities rather than passing.
+against a live tailnet. If the keys listing cannot be read, both checks report
+not evaluated rather than passing. Whether a missing scope returns an error or
+instead returns the listing with the identities filtered out is unconfirmed; if
+it filters silently, AUTH-005 would report that no trust credentials exist and
+AUTH-006 would find nothing to check.
 
 **Additional scopes for fix mode:**
 - `devices:core` - Delete devices, modify tags (requires tag selection)
@@ -356,7 +359,8 @@ Checks for logging configuration, DNS settings, user roles, and manual verificat
 
 ### Severity that depends on the finding
 
-Three checks rate what they find rather than carrying one fixed severity:
+Several checks rate what they find rather than carrying one fixed severity.
+Three are worth calling out here:
 
 - **ACL-011** reports every tag's reach at Informational. It fails only when a
   tag an auth key can assign reaches a wildcard destination, a routed subnet or
@@ -366,7 +370,7 @@ Three checks rate what they find rather than carrying one fixed severity:
   and Low when trust credentials exist but a reusable key still mints tags none
   of them cover.
 - **AUTH-006** reports High for a subject that is nothing but a wildcard, and
-  Low for a narrower wildcard, a missing audience or absent claim rules.
+  Low for a narrower wildcard or a missing audience.
 
 ## Output Example
 

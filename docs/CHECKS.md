@@ -203,7 +203,7 @@ This document provides detailed information about all 57 security checks perform
 
 **What it checks (needs `policy_file:read`, `devices:core:read` and `auth_keys:read`):**
 - Reach for every tag in `tagOwners`, resolved from the `acls` and `grants` rules whose source names that tag or `*`
-- Which devices each tag reaches and on which ports, plus routed CIDRs, exit-node egress, and destinations that could not be resolved
+- How many devices each tag reaches and how many of those it reaches on every port, plus routed CIDRs, exit-node egress, and destinations that could not be resolved
 - Which tags a live auth key can assign, and whether that key is reusable
 
 Reporting reach is the normal result and stays at INFO. The check fails only when a tag an auth key can assign crosses a trust boundary: it reaches a wildcard destination, a routed subnet, or the internet through an exit node. A reusable key makes that HIGH. A one-off key makes it MEDIUM.
@@ -326,7 +326,7 @@ Trust credentials come from the same keys listing as auth keys. If that listing 
 
 ### AUTH-006: Federated identity subject admits unintended principals
 
-**Severity:** HIGH (LOW when only a narrower wildcard, a missing audience or absent claim rules were found)
+**Severity:** HIGH (LOW when only a narrower wildcard or a missing audience was found)
 
 **Description:** A trust credential's subject decides which workloads can mint its tags. A subject that is nothing but a wildcard widens that to every principal the issuer will vouch for, which for a shared issuer such as GitHub Actions is far more than one repository.
 
@@ -335,7 +335,7 @@ Trust credentials come from the same keys listing as auth keys. If that listing 
 - Whether an audience is set
 - Whether custom claim rules narrow a wildcard subject
 
-A subject that is only wildcards and separators fails HIGH: any principal the issuer vouches for can mint that credential's tags. A subject that carries a wildcard but still pins part of the principal is narrower, so it is reported without raising severity. An empty audience and absent claim rules are supporting facts and never set severity on their own — an empty audience next to a wildcard subject is the pairing that matters. When only those narrower findings exist, the check reports LOW.
+A subject that is only wildcards and separators fails HIGH: any principal the issuer vouches for can mint that credential's tags. A subject that carries a wildcard but still pins part of the principal is narrower, so it is reported without raising severity. An empty audience and absent claim rules are supporting facts and never raise severity on their own — an empty audience next to a wildcard subject is the pairing that matters. The claim-rules note is only recorded for a subject that is not pinned, so it never appears on its own. When no whole-subject wildcard is found but a narrower wildcard or a missing audience is, the check reports LOW.
 
 The verdict is issuer-agnostic. Recognising the GitHub Actions, Google and AWS issuers only changes the remediation wording, so a provider that changes its subject grammar cannot silently invalidate the check.
 
