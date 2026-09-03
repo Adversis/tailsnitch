@@ -349,3 +349,87 @@ func TestClassifyErrorUsesTypedAPIStatus(t *testing.T) {
 		t.Errorf("classifyError() status = %d, want 403", err.StatusCode)
 	}
 }
+
+// The SDK documents Keys().List as possibly setting only each key's
+// identifier. If the live API ever does that, every key arrives with an empty
+// keyType: filterFederatedIdentities matches none of them, and GetAuthKeys -
+// which tolerates an empty keyType on purpose - admits all of them with no
+// capabilities set. AUTH-001 to AUTH-006 would then report clean on data they
+// never saw. The read has to fail so those checks fall back to not evaluated.
+func TestGetKeysRejectsAProjectedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"keys":[{"id":"k1"},{"id":"k2"},{"id":"k3"}]}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+
+	keys, err := c.GetKeys(context.Background())
+	if err == nil {
+		t.Fatalf("SECURITY: GetKeys() returned %d keys and no error for a listing with no key types; "+
+			"every key check downstream would report clean on a response it could not read", len(keys))
+	}
+	if !errors.Is(err, ErrProjectedResponse) {
+		t.Errorf("GetKeys() error = %v, want one matching ErrProjectedResponse", err)
+	}
+
+	// The three callers that classify on KeyType must all fail closed.
+	if _, err := c.GetAuthKeys(context.Background()); !errors.Is(err, ErrProjectedResponse) {
+		t.Errorf("GetAuthKeys() error = %v, want ErrProjectedResponse", err)
+	}
+	if _, err := c.GetOAuthClients(context.Background()); !errors.Is(err, ErrProjectedResponse) {
+		t.Errorf("GetOAuthClients() error = %v, want ErrProjectedResponse", err)
+	}
+	if _, err := c.GetFederatedIdentities(context.Background()); !errors.Is(err, ErrProjectedResponse) {
+		t.Errorf("GetFederatedIdentities() error = %v, want ErrProjectedResponse", err)
+	}
+}
+
+// Only a listing where every entry lacks a key type looks like a projection.
+// GetAuthKeys deliberately admits a key whose keyType is empty, so a mixed
+// listing must still work, and an empty tailnet is not a projection either.
+func TestGetKeysAcceptsPartialAndEmptyListings(t *testing.T) {
+	t.Run("some keys without a key type still work", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"keys":[
+				{"id":"k1","description":"no key type"},
+				{"id":"k2","keyType":"auth","description":"ci","capabilities":{"devices":{"create":{"reusable":true}}}}
+			]}`)
+		}))
+		defer srv.Close()
+
+		keys, err := newTestClient(t, srv).GetKeys(context.Background())
+		if err != nil {
+			t.Fatalf("GetKeys() error = %v, want none: only an all-empty listing is a projection", err)
+		}
+		if len(keys) != 2 {
+			t.Fatalf("GetKeys() returned %d keys, want 2", len(keys))
+		}
+
+		authKeys, err := newTestClient(t, srv).GetAuthKeys(context.Background())
+		if err != nil {
+			t.Fatalf("GetAuthKeys() error = %v", err)
+		}
+		if len(authKeys) != 2 {
+			t.Errorf("GetAuthKeys() returned %d keys, want 2: an empty keyType is tolerated on purpose", len(authKeys))
+		}
+	})
+
+	t.Run("an empty listing is not a projection", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"keys":[]}`)
+		}))
+		defer srv.Close()
+
+		keys, err := newTestClient(t, srv).GetKeys(context.Background())
+		if err != nil {
+			t.Fatalf("GetKeys() error = %v, want none for a tailnet with no keys", err)
+		}
+		if len(keys) != 0 {
+			t.Errorf("GetKeys() returned %d keys, want 0", len(keys))
+		}
+	})
+}

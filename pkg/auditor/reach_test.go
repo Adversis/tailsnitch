@@ -19,6 +19,13 @@ func TestTagMatchesSource(t *testing.T) {
 		{"different tag", "tag:ci", []string{"tag:prod"}, false},
 		{"empty src", "tag:ci", nil, false},
 
+		// autogroup:tagged means every tagged device, so it covers any tag.
+		// A policy granting {"src": ["autogroup:tagged"], "dst": ["*:*"]} is
+		// the whole tailnet reaching the whole tailnet; missing it would make
+		// ACL-011 report a clean bill of health on exactly that tailnet.
+		{"autogroup:tagged", "tag:ci", []string{"autogroup:tagged"}, true},
+		{"autogroup:tagged among several", "tag:ci", []string{"group:eng", "autogroup:tagged"}, true},
+
 		// Groups and user autogroups contain USERS. A tagged device is not a
 		// user, so none of these grant a tag anything. Treating them as a
 		// match would inflate every reach number in the report.

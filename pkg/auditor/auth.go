@@ -473,6 +473,21 @@ func subjectBreadth(subject string) breadth {
 	return breadthTrailingWildcard
 }
 
+// identityUnreadable reports whether a trust credential arrived with none of
+// the fields this check reads.
+//
+// Creating a federated identity through the API requires an issuer and a
+// subject, so an entry with an empty subject, an empty issuer and an empty
+// audience cannot have been configured that way: the fields are missing, not
+// permissive. Passing its empty subject to subjectBreadth would classify it
+// as a wildcard and fail the check high on a detail line that reads
+// `subject "" accepts any principal issued by .`
+func identityUnreadable(id client.Key) bool {
+	return strings.TrimSpace(id.Subject) == "" &&
+		strings.TrimSpace(id.Issuer) == "" &&
+		strings.TrimSpace(id.Audience) == ""
+}
+
 // checkFederatedIdentityConfig audits the configuration quality of trust
 // credentials that are already in use (AUTH-005 covers whether they exist at
 // all). A subject that is nothing but a wildcard lets any principal the
@@ -481,6 +496,10 @@ func subjectBreadth(subject string) breadth {
 // subject is narrower and reported without escalating severity; the same
 // goes for an empty audience or absent claim rules, which are supporting
 // facts rather than verdicts on their own.
+//
+// A credential whose fields could not be read is assessed as nothing at all.
+// If that leaves the check with nothing else to report, it reports as not
+// evaluated rather than passing, because part of it did not run.
 func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) types.Suggestion {
 	finding := types.Suggestion{
 		ID:          "AUTH-006",
@@ -493,11 +512,16 @@ func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) type
 		Pass:        true,
 	}
 
-	var wideOpen, narrower, notes []string
+	var wideOpen, narrower, notes, unreadable []string
 	for _, id := range identities {
 		label := id.ID
 		if id.Description != "" {
 			label = fmt.Sprintf("%s (%s)", id.Description, id.ID)
+		}
+		if identityUnreadable(id) {
+			unreadable = append(unreadable, fmt.Sprintf(
+				"%s: subject, issuer and audience are all empty, so this credential's breadth could not be assessed", label))
+			continue
 		}
 		b := subjectBreadth(id.Subject)
 		switch b {
@@ -524,7 +548,7 @@ func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) type
 
 	if len(wideOpen) > 0 {
 		finding.Pass = false
-		finding.Details = append(append(wideOpen, narrower...), notes...)
+		finding.Details = append(append(append(wideOpen, narrower...), notes...), unreadable...)
 		finding.Description = fmt.Sprintf("Found %d trust credential(s) whose subject accepts any principal the issuer vouches for.", len(wideOpen))
 		finding.Fix = &types.FixInfo{
 			Type:        types.FixTypeManual,
@@ -538,9 +562,18 @@ func (a *AuthAuditor) checkFederatedIdentityConfig(identities []client.Key) type
 	if len(narrower) > 0 || len(notes) > 0 {
 		finding.Pass = false
 		finding.Severity = types.Low
-		finding.Details = append(narrower, notes...)
+		finding.Details = append(append(narrower, notes...), unreadable...)
 		finding.Description = "Trust credentials are in use. These carry a wildcard subject or no audience, which may be intended but is worth confirming."
 		return finding
+	}
+
+	// Nothing was found to report, and at least one credential was never
+	// assessed. Passing here would present a control that did not fully run
+	// as a satisfied one.
+	if len(unreadable) > 0 {
+		return types.NotEvaluated("AUTH-006", fmt.Sprintf(
+			"%d trust credential(s) arrived with no subject, no issuer and no audience, so the fields this check reads could not be read: %s",
+			len(unreadable), strings.Join(unreadable, "; ")))
 	}
 
 	if len(identities) > 0 {

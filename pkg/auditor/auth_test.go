@@ -566,4 +566,111 @@ func TestReachNote(t *testing.T) {
 			t.Errorf("reachNote = %q, want empty with no tags to describe", got)
 		}
 	})
+
+	// A tag reaching a wildcard destination takes the other arm of the
+	// switch: there is no count to print, because the rule covers every
+	// device that joins later too. Printing "1 of 1" here would understate
+	// it, and the arm is otherwise untested.
+	t.Run("wildcard reach is named, not counted", func(t *testing.T) {
+		wildcard := ACLPolicy{
+			ACLs: []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"*:*"}}},
+		}
+		got := reachNote([]string{"tag:ci"}, wildcard, true, devices)
+		if !strings.Contains(got, "tag:ci reaches every device") {
+			t.Errorf("reachNote = %q, want it to say the tag reaches every device", got)
+		}
+		if strings.Contains(got, " of ") {
+			t.Errorf("reachNote = %q, want no device count for a wildcard rule", got)
+		}
+	})
+
+	// Routed reach leaves the tailnet, so the note has to name the CIDR
+	// alongside the device count. Nothing else covers that clause.
+	t.Run("routed reach names the cidr", func(t *testing.T) {
+		gw := dev("prod-gw", []string{"10.0.0.0/8"}, nil)
+		routed := ACLPolicy{
+			ACLs: []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"10.1.0.0/16:*"}}},
+		}
+		got := reachNote([]string{"tag:ci"}, routed, true, []*client.Device{web, gw})
+		if !strings.Contains(got, "routes to 10.1.0.0/16") {
+			t.Errorf("reachNote = %q, want it to name the routed CIDR", got)
+		}
+	})
+}
+
+// An entry whose subject, issuer and audience are all empty was not read, not
+// configured: CreateFederatedIdentityRequest requires an issuer and a subject,
+// so the API cannot have produced one. Classifying its empty subject as a
+// wildcard invents a HIGH finding out of missing data and prints the
+// self-evidently broken line `subject "" accepts any principal issued by .`
+func TestCheckFederatedIdentityConfigUnreadableIdentity(t *testing.T) {
+	a := &AuthAuditor{}
+
+	t.Run("an all-empty identity is not evaluated, not a wildcard", func(t *testing.T) {
+		f := a.checkFederatedIdentityConfig([]client.Key{{ID: "f1", KeyType: client.KeyTypeFederated}})
+
+		if f.Pass {
+			t.Error("SECURITY: an identity that could not be read must not report as a satisfied control")
+		}
+		if f.Severity == types.High {
+			t.Error("SECURITY: missing fields are not a permissive configuration and must not be rated HIGH")
+		}
+		if !strings.Contains(f.Title, "not evaluated") {
+			t.Errorf("Title = %q, want the not-evaluated finding", f.Title)
+		}
+		if strings.Contains(f.Description, "accepts any principal") {
+			t.Errorf("Description = %q, want no wildcard-subject verdict on an unread identity", f.Description)
+		}
+		if detailsContain(f.Details, "accepts any principal") {
+			t.Errorf("Details fabricates a wildcard verdict from missing data: %v", f.Details)
+		}
+	})
+
+	// An unreadable entry must not swallow a real finding from a readable one.
+	t.Run("a real wildcard alongside an unreadable entry still fails high", func(t *testing.T) {
+		ids := []client.Key{
+			{ID: "f1"},
+			{ID: "f2", Issuer: "token.actions.githubusercontent.com", Subject: "*"},
+		}
+		f := a.checkFederatedIdentityConfig(ids)
+
+		if f.Pass || f.Severity != types.High {
+			t.Errorf("want fail HIGH on the readable wildcard, got pass=%v severity=%s", f.Pass, f.Severity)
+		}
+		if !detailsContain(f.Details, "could not be assessed") {
+			t.Errorf("Details must still say one identity was never assessed: %v", f.Details)
+		}
+	})
+
+	t.Run("a readable identity is unaffected", func(t *testing.T) {
+		ids := []client.Key{{
+			ID: "f1", Issuer: "token.actions.githubusercontent.com",
+			Subject: "repo:org/repo:ref:refs/heads/main", Audience: "tailscale",
+		}}
+		if f := a.checkFederatedIdentityConfig(ids); !f.Pass {
+			t.Errorf("a fully pinned identity must still pass: %+v", f.Details)
+		}
+	})
+}
+
+func TestIdentityUnreadable(t *testing.T) {
+	tests := []struct {
+		name string
+		id   client.Key
+		want bool
+	}{
+		{"all three empty", client.Key{ID: "f1"}, true},
+		{"whitespace only", client.Key{ID: "f1", Subject: " ", Issuer: "\t", Audience: " "}, true},
+		{"subject set", client.Key{ID: "f1", Subject: "*"}, false},
+		{"issuer set", client.Key{ID: "f1", Issuer: "oidc.example.invalid"}, false},
+		{"audience set", client.Key{ID: "f1", Audience: "tailscale"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := identityUnreadable(tt.id); got != tt.want {
+				t.Errorf("identityUnreadable(%+v) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
 }

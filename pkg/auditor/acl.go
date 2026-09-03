@@ -916,6 +916,17 @@ func (a *ACLAuditor) checkTagReach(policy ACLPolicy, devices []*client.Device, k
 		Pass:        true,
 	}
 
+	// An empty inventory that arrived without an error is indistinguishable
+	// from a device list that was never populated. Reach computed against it
+	// would report "reaches 0 of 0 devices" for every tag and could return a
+	// clean sweep, so say the check did not run instead. reachNote in the
+	// auth checks guards the same condition the same way.
+	if len(devices) == 0 {
+		return types.NotEvaluated("ACL-011",
+			"The device inventory came back empty, so there is nothing to compute reach against. "+
+				"Every tag would report reaching 0 of 0 devices, which cannot be told apart from a tailnet with no devices.")
+	}
+
 	reaches := AllTagReach(policy, devices)
 	if len(reaches) == 0 {
 		finding.Description = "The policy defines no tags."

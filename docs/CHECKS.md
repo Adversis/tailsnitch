@@ -202,7 +202,7 @@ This document provides detailed information about all 57 security checks perform
 **Description:** What a tag can reach is what a node carrying that tag can reach. A tag that an auth key can assign is reachable by anyone holding that key, so a stolen key inherits everything its tags reach.
 
 **What it checks (needs `policy_file:read`, `devices:core:read` and `auth_keys:read`):**
-- Reach for every tag in `tagOwners`, resolved from the `acls` and `grants` rules whose source names that tag or `*`
+- Reach for every tag in `tagOwners`, resolved from the `acls` and `grants` rules whose source names that tag, `*`, or `autogroup:tagged`
 - How many devices each tag reaches and how many of those it reaches on every port, plus routed CIDRs, exit-node egress, and destinations that could not be resolved
 - Which tags a live auth key can assign, and whether that key is reusable
 
@@ -210,7 +210,13 @@ Reporting reach is the normal result and stays at INFO. The check fails only whe
 
 Severity never comes from a device count. Tailsnitch cannot tell whether a tag reaching 47 devices is correct for that tag or catastrophic, so the count is reported and never scored.
 
-If the auth keys cannot be read, reach is still reported but the check fails at INFO with a manual-check note: it is then unknown which tags a key can assign. If the device inventory cannot be read, the check reports as not evaluated, because no reach it would report can be trusted.
+If the auth keys cannot be read, reach is still reported but the check fails at INFO with a manual-check note: it is then unknown which tags a key can assign. If the device inventory cannot be read, the check reports as not evaluated, because no reach it would report can be trusted. An inventory that comes back empty is treated the same way. An empty tailnet and an inventory that was never filled look alike. Reach computed against either one says that every tag reaches 0 of 0 devices.
+
+**Limitations:**
+
+The check does not follow transitive mintability. It matches tag names exactly. Say a key mints `tag:ci`, and `tagOwners["tag:prod"]` lists `tag:ci`. A node that carries `tag:ci` can then apply `tag:prod`, so the key mints `tag:prod` too. Tailsnitch does not report the reach of `tag:prod` for that key. This is how a foothold on one tag becomes a foothold on another. Read `tagOwners` by hand for the tags that own other tags.
+
+The check reads three source selectors: `*`, an exact tag, and `autogroup:tagged`. It ignores every other selector. If a policy grants a tag access through a different selector, the check reports less reach than the tag really has.
 
 **Suppressing a tag that is broad by design:**
 
@@ -339,7 +345,7 @@ A subject that is only wildcards and separators fails HIGH: any principal the is
 
 The verdict is issuer-agnostic. Recognising the GitHub Actions, Google and AWS issuers only changes the remediation wording, so a provider that changes its subject grammar cannot silently invalidate the check.
 
-As with AUTH-005, a keys listing that cannot be read makes this check report as not evaluated rather than passing.
+As with AUTH-005, a keys listing that cannot be read makes this check report as not evaluated rather than passing. A single credential that arrives with no subject, no issuer and no audience is treated the same way. The API requires an issuer and a subject to create a federated identity, so an entry with neither is missing data, not a wildcard. The check assesses nothing for it, and reports as not evaluated if that leaves it with nothing else to report.
 
 **Remediation:** Pin each subject to one workload. Set an audience so a token minted for another relying party cannot be replayed, and add claim rules to tighten further.
 

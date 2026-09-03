@@ -43,11 +43,14 @@ type RuleRef struct {
 }
 
 // tagMatchesSource reports whether a rule with this src applies to the given
-// tag. Only an exact tag match and the wildcard match. Named groups and user
-// autogroups contain users, and a tagged device is not a user.
+// tag. Three selectors match: the wildcard, the tag itself, and
+// autogroup:tagged, which means every tagged device and so covers any tag.
+// Named groups and the user autogroups (autogroup:member, autogroup:admin,
+// autogroup:self) contain users, and a tagged device is not a user, so they
+// never match.
 func tagMatchesSource(tag string, src []string) bool {
 	for _, s := range src {
-		if s == "*" || s == tag {
+		if s == "*" || s == tag || s == "autogroup:tagged" {
 			return true
 		}
 	}

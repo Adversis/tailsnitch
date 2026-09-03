@@ -30,8 +30,17 @@ func TestFlowLogsDisabledIsLow(t *testing.T) {
 func TestFlowLogsEnabledPasses(t *testing.T) {
 	l := &LoggingAuditor{}
 
-	if f := l.checkNetworkFlowLogs(settingsCtx(client.TailnetSettings{NetworkFlowLoggingOn: true})); !f.Pass {
+	f := l.checkNetworkFlowLogs(settingsCtx(client.TailnetSettings{NetworkFlowLoggingOn: true}))
+
+	if !f.Pass {
 		t.Error("checkNetworkFlowLogs() Pass = false, want true when flow logging is on")
+	}
+	// FilterBySeverity ignores Pass, so a passing finding rated LOW would
+	// surface under --min-severity low as if it were a gap. The severity bump
+	// belongs to the confirmed-off branch alone.
+	if f.Severity != types.Informational {
+		t.Errorf("checkNetworkFlowLogs() Severity = %s, want %s: a passing finding must not carry a gap's severity",
+			f.Severity, types.Informational)
 	}
 }
 

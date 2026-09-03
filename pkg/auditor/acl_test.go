@@ -887,3 +887,99 @@ func TestCheckTagReachPerItemIgnore(t *testing.T) {
 		}
 	})
 }
+
+// A device inventory that came back empty without an error cannot be told
+// apart from one that was never populated. Computing reach against it prints
+// "reaches 0 of 0 devices" for every tag and would let the check report a
+// clean sweep over an inventory it never had.
+func TestCheckTagReachEmptyInventoryIsNotEvaluated(t *testing.T) {
+	reusableCIKey := client.Key{ID: "k1", KeyType: client.KeyTypeAuth}
+	reusableCIKey.Capabilities.Devices.Create.Reusable = true
+	reusableCIKey.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+
+	// A tag destination, not a wildcard: against a real inventory this tag
+	// crosses no boundary, so with no inventory at all the check would take
+	// the clean-sweep path and report a satisfied control.
+	policy := ACLPolicy{
+		TagOwners: map[string][]string{"tag:ci": nil},
+		ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+	}
+
+	f := (&ACLAuditor{}).checkTagReach(policy, nil, []client.Key{reusableCIKey}, nil, nil)
+
+	if f.Pass {
+		t.Error("SECURITY: an empty device inventory must not report as a satisfied control - " +
+			"a passing finding is filtered from the default output and counted as a satisfied control")
+	}
+	if !strings.Contains(f.Title, "not evaluated") {
+		t.Errorf("Title = %q, want the not-evaluated finding", f.Title)
+	}
+	if !strings.Contains(f.Description, "empty") {
+		t.Errorf("Description = %q, want it to name the empty inventory", f.Description)
+	}
+	if detailsContain(f.Details, "0 of 0") {
+		t.Errorf("Details prints reach figures derived from an inventory the check never had: %v", f.Details)
+	}
+}
+
+// Regression: autogroup:tagged means every tagged device, so a rule with that
+// source grants every tag whatever it names. Reading it as matching no tag
+// made ACL-011 compute zero reach and pass on exactly the tailnet - one broad
+// rule, every tagged node behind it - that this check exists to find.
+func TestCheckTagReachAutogroupTaggedSource(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+
+	reusableCIKey := client.Key{ID: "k1", KeyType: client.KeyTypeAuth}
+	reusableCIKey.Capabilities.Devices.Create.Reusable = true
+	reusableCIKey.Capabilities.Devices.Create.Tags = []string{"tag:ci"}
+
+	policy := ACLPolicy{
+		TagOwners: map[string][]string{"tag:ci": nil},
+		ACLs:      []ACLRule{{Action: "accept", Src: []string{"autogroup:tagged"}, Dst: []string{"*:*"}}},
+	}
+
+	f := (&ACLAuditor{}).checkTagReach(policy, []*client.Device{web}, []client.Key{reusableCIKey}, nil, nil)
+
+	if f.Pass {
+		t.Error("SECURITY: a rule granting autogroup:tagged access to everything puts every " +
+			"mintable tag on the whole tailnet; the check must not report that as clean")
+	}
+	if f.Severity != types.High {
+		t.Errorf("Severity = %s, want HIGH: a reusable key mints tag:ci and tag:ci reaches every device", f.Severity)
+	}
+}
+
+// suppressedTagsPresent exists so an ignore rule naming a tag the policy does
+// not have cannot claim something was suppressed. Without its present filter
+// the check tells the reader that tags are missing from a table that is in
+// fact complete, which is worse than saying nothing.
+func TestSuppressedTagsPresentIgnoresAbsentTags(t *testing.T) {
+	web := &client.Device{}
+	web.Name = "web-01"
+	web.Tags = []string{"tag:prod"}
+
+	policy := ACLPolicy{
+		TagOwners: map[string][]string{"tag:ci": nil},
+		ACLs:      []ACLRule{{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:prod:22"}}},
+	}
+	reaches := AllTagReach(policy, []*client.Device{web})
+
+	// The ignore file names a tag this policy does not define. Nothing was
+	// suppressed, because there was nothing there to suppress.
+	il := ignoreListFor(t, "tag:absent")
+
+	if got := suppressedTagsPresent(il, reaches); len(got) != 0 {
+		t.Errorf("suppressedTagsPresent() = %v, want none: the policy has no tag:absent to suppress", got)
+	}
+
+	f := (&ACLAuditor{}).checkTagReach(policy, []*client.Device{web}, nil, nil, il)
+
+	if detailsContain(f.Details, "were suppressed by the ignore file") {
+		t.Errorf("the check claims a tag was hidden from a complete table: %v", f.Details)
+	}
+	if !detailsContain(f.Details, "tag:ci") {
+		t.Errorf("the reach table must still list tag:ci: %v", f.Details)
+	}
+}
